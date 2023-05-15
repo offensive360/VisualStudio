@@ -21,8 +21,6 @@ This section explains how to install and configure the Offensive 360 Visual Stud
 ![image](https://user-images.githubusercontent.com/13881466/179386662-3589e4e4-fd5e-4382-8388-92b5f71c214b.png)
 
 3. Enter Offensive 360 scan endpoint and access token information and click on ok button
-![image](https://user-images.githubusercontent.com/13881466/179386720-f2a5bd50-5c3f-4465-ae66-77624c7064f0.png)
-
 
 ## How it works
 1. Simply open any .Net solution in Visual studio and click on `Build => Offensive 2360 : Scan` menu to start the scaning of current .Net solution 
@@ -47,6 +45,5 @@ This section explains how to install and configure the Offensive 360 Visual Stud
 
 7. `Get Help` on right click on a vulnerability will be appeared and help you in getting more details about a vulnerability
 ![image](https://user-images.githubusercontent.com/13881466/179387293-df2777ec-95ee-4947-8f31-410b87b61cd9.png)
-![image](https://user-images.githubusercontent.com/13881466/179200804-21bc6707-6640-419d-8900-e6fec612eee3.png)
 
 **Enjoy!!**
