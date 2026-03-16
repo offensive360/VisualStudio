@@ -23,25 +23,50 @@ jobs:
     - name: Restore NuGet packages
       run: nuget restore OffensiveVS360.sln
 
-    - name: Build VSIX
+    - name: Build Release DLL
       run: |
-        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:CreateVsixContainer=true /verbosity:minimal /m
+        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:CreateVsixContainer=false /verbosity:minimal /m
 
-    - name: Locate and copy VSIX
+    - name: Package VSIX
       shell: pwsh
       run: |
-        Write-Host "=== Searching for VSIX files ==="
-        Get-ChildItem -Recurse -Filter "*.vsix" | ForEach-Object { Write-Host $_.FullName }
-        Write-Host "=== bin/Release contents ==="
-        Get-ChildItem -Recurse "OffensiveVS360\bin\Release" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
-        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
-        if (-not $vsix) {
-          Write-Error "No .vsix file found after build"
-          exit 1
+        Add-Type -Assembly 'System.IO.Compression'
+        Add-Type -Assembly 'System.IO.Compression.FileSystem'
+
+        $dllDir = "OffensiveVS360\bin\Release\net472"
+        $staging = "vsix_staging"
+        New-Item -ItemType Directory $staging -Force | Out-Null
+        New-Item -ItemType Directory "$staging\Resources" -Force | Out-Null
+
+        Copy-Item "$dllDir\OffensiveVS360.dll" $staging
+        if (Test-Path "$dllDir\Newtonsoft.Json.dll") { Copy-Item "$dllDir\Newtonsoft.Json.dll" $staging }
+        Copy-Item "OffensiveVS360\Resources\logo.png" "$staging\Resources\"
+
+        Copy-Item "vsix_template\extension.vsixmanifest" $staging
+        Copy-Item "vsix_template\OffensiveVS360.pkgdef" $staging
+        Copy-Item "vsix_template\Content_Types.xml" "$staging\[Content_Types].xml"
+        Copy-Item "README.md" $staging
+
+        Write-Host "=== VSIX staging contents ==="
+        Get-ChildItem -Recurse $staging | ForEach-Object { Write-Host $_.FullName }
+
+        # Create VSIX using ZipFile (proper OPC packaging, no directory entries)
+        $vsixPath = [System.IO.Path]::GetFullPath("OffensiveVS360.vsix")
+        if (Test-Path $vsixPath) { Remove-Item $vsixPath }
+
+        $stagingFull = [System.IO.Path]::GetFullPath($staging)
+        $zip = [System.IO.Compression.ZipFile]::Open($vsixPath, [System.IO.Compression.ZipArchiveMode]::Create)
+        try {
+          Get-ChildItem -Recurse -File $staging | ForEach-Object {
+            $entryName = $_.FullName.Substring($stagingFull.Length + 1).Replace('\', '/')
+            Write-Host "Adding: $entryName"
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+          }
+        } finally {
+          $zip.Dispose()
         }
-        Write-Host "Found VSIX: $($vsix.FullName)"
-        Copy-Item $vsix.FullName "OffensiveVS360.vsix"
-        Write-Host "VSIX size: $([math]::Round((Get-Item 'OffensiveVS360.vsix').Length/1KB,1)) KB"
+
+        Write-Host "VSIX size: $([math]::Round((Get-Item $vsixPath).Length/1KB,1)) KB"
 
     - name: Upload VSIX artifact
       uses: actions/upload-artifact@v4
