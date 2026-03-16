@@ -251,7 +251,7 @@ namespace OffensiveVS360.ToolWindow
                 var ep = textDoc.StartPoint.CreateEditPoint();
                 var line = v.GetLineNumberInt();
                 ep.MoveToLineAndOffset(line, 1);
-                ep.TryToShow(vsFindResults.vsFindResultsNone, true);
+                ep.TryToShow(EnvDTE.vsFindResults.vsFindResultsNone, true);
 
                 var sel = textDoc.Selection;
                 sel.MoveToLineAndOffset(line, Math.Max(1, v.GetColumnNumberInt()));
