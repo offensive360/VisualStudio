@@ -9,7 +9,7 @@
   "identity": {
     "internalName": "OffensiveVS360"
   },
-  "overview": "README.md",
+  "overview": "../README.md",
   "publisher": "Offensive360",
   "tags": [
     "security",
