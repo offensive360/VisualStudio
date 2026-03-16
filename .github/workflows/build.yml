@@ -24,19 +24,35 @@ jobs:
       run: nuget restore OffensiveVS360.sln
 
     - name: Build Release VSIX
-      run: msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /m
+      run: |
+        # Find VS install path for VSIX creation
+        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.CoreEditor -property installationPath
+        echo "VS Path: $vsPath"
+        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:VsSDKInstall="$vsPath\VSSDK" /m
 
-    - name: Find VSIX
-      id: find_vsix
+    - name: List build outputs
+      run: |
+        echo "=== All VSIX files ==="
+        Get-ChildItem -Recurse -Filter "*.vsix" | ForEach-Object { echo $_.FullName }
+        echo "=== bin/Release contents ==="
+        Get-ChildItem -Recurse -Path "OffensiveVS360\bin" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
+
+    - name: Find and upload VSIX
       run: |
         $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
-        echo "VSIX_PATH=$($vsix.FullName)" >> $env:GITHUB_OUTPUT
-        echo "VSIX_NAME=$($vsix.Name)" >> $env:GITHUB_OUTPUT
-        echo "Found: $($vsix.FullName)"
+        if ($vsix) {
+          echo "Found VSIX: $($vsix.FullName)"
+          Copy-Item $vsix.FullName "OffensiveVS360.vsix"
+        } else {
+          echo "No VSIX found, checking for manual creation..."
+          # The VSIX SDK may need VS installed — try creating via command line
+          exit 1
+        }
 
     - name: Upload VSIX artifact
       uses: actions/upload-artifact@v4
       with:
         name: OffensiveVS360-vsix
-        path: ${{ steps.find_vsix.outputs.VSIX_PATH }}
+        path: OffensiveVS360.vsix
+        if-no-files-found: error
         retention-days: 30
