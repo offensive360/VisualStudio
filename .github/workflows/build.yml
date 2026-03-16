@@ -23,28 +23,20 @@ jobs:
     - name: Restore NuGet packages
       run: nuget restore OffensiveVS360.sln
 
-    - name: Build Release DLL
+    - name: Build VSIX
       run: |
-        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:CreateVsixContainer=false /verbosity:minimal /m
+        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:DeployExtension=false /p:CreateVsixContainer=true /verbosity:minimal /m
 
-    - name: Package VSIX
+    - name: Locate and copy VSIX
+      shell: pwsh
       run: |
-        $dllDir = "OffensiveVS360\bin\Release\net472"
-        $staging = "vsix_staging"
-        New-Item -ItemType Directory $staging -Force | Out-Null
-        New-Item -ItemType Directory "$staging\Resources" -Force | Out-Null
-
-        Copy-Item "$dllDir\OffensiveVS360.dll" $staging
-        if (Test-Path "$dllDir\Newtonsoft.Json.dll") { Copy-Item "$dllDir\Newtonsoft.Json.dll" $staging }
-        Copy-Item "OffensiveVS360\Resources\logo.png" "$staging\Resources\"
-
-        Copy-Item "vsix_template\extension.vsixmanifest" $staging
-        Copy-Item "vsix_template\OffensiveVS360.pkgdef" $staging
-        Copy-Item "vsix_template\Content_Types.xml" "$staging\[Content_Types].xml"
-        Copy-Item "README.md" $staging
-
-        Get-ChildItem -Recurse $staging | ForEach-Object { Write-Host $_.FullName }
-        Compress-Archive -Path "$staging\*" -DestinationPath "OffensiveVS360.vsix" -Force
+        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
+        if (-not $vsix) {
+          Write-Error "No .vsix file found after build"
+          exit 1
+        }
+        Write-Host "Found VSIX: $($vsix.FullName)"
+        Copy-Item $vsix.FullName "OffensiveVS360.vsix"
         Write-Host "VSIX size: $([math]::Round((Get-Item 'OffensiveVS360.vsix').Length/1KB,1)) KB"
 
     - name: Upload VSIX artifact

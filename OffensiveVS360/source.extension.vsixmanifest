@@ -8,20 +8,7 @@
               Language="en-US"
               Publisher="Offensive360"/>
     <DisplayName>Offensive 360 Visual Studio Extension</DisplayName>
-    <Description xml:space="preserve">
-Enterprise Static Application Security Testing (SAST) integrated directly into Visual Studio.
-
-Features:
-• Scan your entire solution, a single project, or just the active file
-• Real-time queue status and progress updates in the status bar
-• Security Findings panel — findings grouped and sorted by severity
-• Double-click any finding to navigate directly to the vulnerable line
-• Detailed fix recommendations and code snippets in the findings panel
-• Dependency (SCA), license, and malware scanning options
-• Configurable via Tools → Options → O360 SAST
-
-Requires an O360 SAST server and API token.
-    </Description>
+    <Description xml:space="preserve">Enterprise SAST integrated into Visual Studio. Scan solutions, projects, or files from the Build menu. View findings by severity, navigate to vulnerable lines, and configure via Tools &gt; Options &gt; O360 SAST. Requires an O360 SAST server and API token.</Description>
     <MoreInfo>https://offensive360.com</MoreInfo>
     <License>offensive-license-terms.md</License>
     <Icon>Resources\logo.png</Icon>
@@ -54,5 +41,8 @@ Requires an O360 SAST server and API token.
            d:Source="Project"
            d:ProjectName="%CurrentProject%"
            Path="|OffensiveVS360|"/>
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Details"
+           d:Source="File"
+           Path="..\README.md"/>
   </Assets>
 </PackageManifest>

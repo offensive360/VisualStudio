@@ -41,6 +41,10 @@
     <None Include="offensive-license-terms.md">
       <IncludeInVSIX>true</IncludeInVSIX>
     </None>
+    <None Include="..\README.md">
+      <IncludeInVSIX>true</IncludeInVSIX>
+      <Link>README.md</Link>
+    </None>
     <VSCTCompile Include="OffensiveVS360Package.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
       <SubType>Designer</SubType>
