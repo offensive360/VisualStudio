@@ -2,6 +2,8 @@
 
 Enterprise Static Application Security Testing (SAST) integrated directly into Visual Studio 2022. Scan your solution, project, or active file for security vulnerabilities without leaving your IDE. Results appear in a dedicated findings panel with direct code navigation to every vulnerability.
 
+![Security Findings Panel](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-findings-panel.png)
+
 ## Features
 
 ### Scan from the Build Menu
@@ -18,6 +20,8 @@ All scan options are accessible from **Build → O360 SAST** and from the **O360
 - **Code Navigation** — Double-click any finding to open the source file and jump to the exact vulnerable line
 - **Real-time Progress** — Status bar shows scan progress and queue position
 
+![Scan in Progress](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-scan-started.png)
+
 ### Multiple Scan Types
 - **Code Vulnerabilities** — 20+ language engines (C#, Java, JavaScript/TypeScript, Python, PHP, Go, Ruby, Kotlin, Swift, Dart, and more)
 - **Dependency Scanning (SCA)** — Known CVEs in NuGet, npm, Maven, and other package managers
@@ -28,6 +32,8 @@ All scan options are accessible from **Build → O360 SAST** and from the **O360
 - On-premises or cloud O360 SAST server
 - API token authentication
 - Per-user settings via **Tools → Options → O360 SAST**
+
+![Scan Results — 8 Findings](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-findings.png)
 
 ## Getting Started
 
@@ -50,6 +56,8 @@ All scan options are accessible from **Build → O360 SAST** and from the **O360
 3. Set **Access Token** — generated from O360 dashboard → Settings → Access Tokens
 4. Optionally enable **Dependency Scanning**, **License Scanning**, or **Malware Scanning**
 
+![Settings Page](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-settings.png)
+
 ### First Scan
 
 1. Open a solution in Visual Studio
@@ -58,6 +66,8 @@ All scan options are accessible from **Build → O360 SAST** and from the **O360
 4. When complete, the **O360 Security Findings** panel opens automatically
 5. Click any finding to navigate to the vulnerable line
 6. Review the detail panel for fix recommendations
+
+![Code Analysis in Action](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-code-squiggles.png)
 
 ### Opening the Findings Panel
 
