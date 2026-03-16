@@ -1,17 +1,17 @@
 {
   "manifestVersion": "1.1",
   "info": {
-    "id": "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d,version=3.0.0",
+    "id": "Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6,version=3.0.0",
     "manifestType": "Extension"
   },
   "packages": [
     {
-      "id": "Component.OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d",
+      "id": "Component.Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6",
       "version": "3.0.0",
       "type": "Component",
       "extension": true,
       "dependencies": {
-        "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d": "3.0.0",
+        "Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6": "3.0.0",
         "Microsoft.VisualStudio.Component.CoreEditor": "[17.0,18.0)"
       },
       "localizedResources": [
@@ -23,7 +23,7 @@
       ]
     },
     {
-      "id": "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d",
+      "id": "Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6",
       "version": "3.0.0",
       "type": "Vsix",
       "payloads": [
@@ -32,7 +32,7 @@
           "size": 0
         }
       ],
-      "vsixId": "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d",
+      "vsixId": "Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6",
       "extensionDir": "[installdir]\\Common7\\IDE\\Extensions\\offensivevs360",
       "installSizes": { "targetDrive": 0 }
     }
