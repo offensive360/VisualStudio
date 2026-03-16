@@ -56,7 +56,7 @@ All scan options are accessible from **Build → O360 SAST** and from the **O360
 3. Set **Access Token** — generated from O360 dashboard → Settings → Access Tokens
 4. Optionally enable **Dependency Scanning**, **License Scanning**, or **Malware Scanning**
 
-![Settings Page](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/screenshot-settings.png)
+![Settings — Tools → Options → O360 SAST](https://raw.githubusercontent.com/offensive360/VisualStudio/master/images/vs_o360_settings.png)
 
 ### First Scan
 
