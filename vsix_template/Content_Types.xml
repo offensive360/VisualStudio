@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="dll"     ContentType="application/octet-stream" />
-  <Default Extension="pkgdef"  ContentType="text/plain" />
-  <Default Extension="png"     ContentType="image/png" />
-  <Override PartName="/extension.vsixmanifest" ContentType="text/xml" />
-  <Default Extension="md" ContentType="text/markdown" />
+  <Default Extension="vsixmanifest" ContentType="text/xml" />
+  <Default Extension="dll"          ContentType="application/octet-stream" />
+  <Default Extension="pkgdef"       ContentType="text/plain" />
+  <Default Extension="png"          ContentType="application/octet-stream" />
+  <Default Extension="json"         ContentType="application/json" />
+  <Default Extension="md"           ContentType="text/markdown" />
 </Types>

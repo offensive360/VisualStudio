@@ -33,34 +33,107 @@ jobs:
         Add-Type -Assembly 'System.IO.Compression'
         Add-Type -Assembly 'System.IO.Compression.FileSystem'
 
-        $dllDir = "OffensiveVS360\bin\Release\net472"
+        $dllDir  = "OffensiveVS360\bin\Release\net472"
         $staging = "vsix_staging"
         New-Item -ItemType Directory $staging -Force | Out-Null
         New-Item -ItemType Directory "$staging\Resources" -Force | Out-Null
 
-        Copy-Item "$dllDir\OffensiveVS360.dll" $staging
+        Copy-Item "$dllDir\OffensiveVS360.dll"        $staging
         if (Test-Path "$dllDir\Newtonsoft.Json.dll") { Copy-Item "$dllDir\Newtonsoft.Json.dll" $staging }
         Copy-Item "OffensiveVS360\Resources\logo.png" "$staging\Resources\"
 
         Copy-Item "vsix_template\extension.vsixmanifest" $staging
-        Copy-Item "vsix_template\OffensiveVS360.pkgdef" $staging
-        Copy-Item "vsix_template\Content_Types.xml" "$staging\[Content_Types].xml"
-        Copy-Item "README.md" $staging
+        Copy-Item "vsix_template\OffensiveVS360.pkgdef"  $staging
+        Copy-Item "vsix_template\Content_Types.xml"      "$staging\[Content_Types].xml"
+        Copy-Item "README.md"                            $staging
+
+        # --- Generate manifest.json (required by VS Marketplace) ---
+        $vsixId = "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d"
+        $version = "3.0.0"
+
+        $manifestJson = @"
+{
+  "id": "$vsixId",
+  "version": "$version",
+  "type": "Vsix",
+  "vsixId": "$vsixId",
+  "extensionDir": "[installdir]\\Common7\\IDE\\Extensions\\offensivevs360",
+  "files": [
+    { "fileName": "/extension.vsixmanifest", "sha256": null },
+    { "fileName": "/OffensiveVS360.dll",     "sha256": null },
+    { "fileName": "/OffensiveVS360.pkgdef",  "sha256": null },
+    { "fileName": "/Resources/logo.png",     "sha256": null },
+    { "fileName": "/README.md",              "sha256": null }
+  ],
+  "installSizes": { "targetDrive": 0 },
+  "dependencies": {
+    "Microsoft.VisualStudio.Component.CoreEditor": "[17.0,18.0)"
+  }
+}
+"@
+        Set-Content -Path "$staging\manifest.json" -Value $manifestJson -Encoding UTF8
+
+        # --- Generate catalog.json (required by VS Marketplace) ---
+        $catalogJson = @"
+{
+  "manifestVersion": "1.1",
+  "info": {
+    "id": "$vsixId,version=$version",
+    "manifestType": "Extension"
+  },
+  "packages": [
+    {
+      "id": "Component.$vsixId",
+      "version": "$version",
+      "type": "Component",
+      "extension": true,
+      "dependencies": {
+        "$vsixId": "$version",
+        "Microsoft.VisualStudio.Component.CoreEditor": "[17.0,18.0)"
+      },
+      "localizedResources": [
+        {
+          "language": "en-US",
+          "title": "Offensive 360 Visual Studio Extension",
+          "description": "Enterprise SAST integrated into Visual Studio. Scan solutions, projects, or files from the Build menu. View findings by severity, navigate to vulnerable lines, and configure via Tools > Options > O360 SAST. Requires an O360 SAST server and API token."
+        }
+      ]
+    },
+    {
+      "id": "$vsixId",
+      "version": "$version",
+      "type": "Vsix",
+      "payloads": [
+        {
+          "fileName": "OffensiveVS360.vsix",
+          "size": 0
+        }
+      ],
+      "vsixId": "$vsixId",
+      "extensionDir": "[installdir]\\Common7\\IDE\\Extensions\\offensivevs360",
+      "installSizes": { "targetDrive": 0 }
+    }
+  ]
+}
+"@
+        Set-Content -Path "$staging\catalog.json" -Value $catalogJson -Encoding UTF8
 
         Write-Host "=== VSIX staging contents ==="
         Get-ChildItem -Recurse $staging | ForEach-Object { Write-Host $_.FullName }
 
         # Create VSIX using ZipFile (proper OPC packaging, no directory entries)
-        $vsixPath = [System.IO.Path]::GetFullPath("OffensiveVS360.vsix")
+        $vsixPath   = [System.IO.Path]::GetFullPath("OffensiveVS360.vsix")
+        $stagingFull = [System.IO.Path]::GetFullPath($staging)
         if (Test-Path $vsixPath) { Remove-Item $vsixPath }
 
-        $stagingFull = [System.IO.Path]::GetFullPath($staging)
         $zip = [System.IO.Compression.ZipFile]::Open($vsixPath, [System.IO.Compression.ZipArchiveMode]::Create)
         try {
           Get-ChildItem -Recurse -File $staging | ForEach-Object {
             $entryName = $_.FullName.Substring($stagingFull.Length + 1).Replace('\', '/')
             Write-Host "Adding: $entryName"
-            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $_.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+              $zip, $_.FullName, $entryName, [System.IO.Compression.CompressionLevel]::Optimal
+            ) | Out-Null
           }
         } finally {
           $zip.Dispose()
