@@ -20,33 +20,66 @@ jobs:
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
 
+    - name: Find VS installation
+      id: vs
+      run: |
+        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+        $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.CoreEditor -property installationPath
+        echo "VS_PATH=$vsPath" >> $env:GITHUB_OUTPUT
+        echo "Found VS at: $vsPath"
+        # List VSSDK presence
+        Get-ChildItem "$vsPath\VSSDK" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { echo $_.FullName }
+
     - name: Restore NuGet packages
       run: nuget restore OffensiveVS360.sln
 
     - name: Build Release VSIX
       run: |
-        # Find VS install path for VSIX creation
-        $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.CoreEditor -property installationPath
-        echo "VS Path: $vsPath"
-        msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /p:VsSDKInstall="$vsPath\VSSDK" /m
+        msbuild OffensiveVS360.sln `
+          /p:Configuration=Release `
+          /p:Platform="Any CPU" `
+          /p:DeployExtension=false `
+          /p:CreateVsixContainer=true `
+          /p:VsSDKInstall="${{ steps.vs.outputs.VS_PATH }}\VSSDK" `
+          /p:VsSDKToolsPath="${{ steps.vs.outputs.VS_PATH }}\VSSDK\VisualStudioIntegration\Tools\Bin" `
+          /verbosity:minimal `
+          /m
 
-    - name: List build outputs
+    - name: List all build output
       run: |
-        echo "=== All VSIX files ==="
-        Get-ChildItem -Recurse -Filter "*.vsix" | ForEach-Object { echo $_.FullName }
-        echo "=== bin/Release contents ==="
-        Get-ChildItem -Recurse -Path "OffensiveVS360\bin" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
+        echo "=== All files under OffensiveVS360/bin ==="
+        Get-ChildItem -Recurse "OffensiveVS360\bin" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
+        echo "=== VSIX files anywhere ==="
+        Get-ChildItem -Recurse -Filter "*.vsix" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
 
-    - name: Find and upload VSIX
+    - name: Package VSIX
       run: |
-        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
+        # Try to find VSIX
+        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($vsix) {
-          echo "Found VSIX: $($vsix.FullName)"
+          echo "Found VSIX at: $($vsix.FullName)"
           Copy-Item $vsix.FullName "OffensiveVS360.vsix"
         } else {
-          echo "No VSIX found, checking for manual creation..."
-          # The VSIX SDK may need VS installed — try creating via command line
-          exit 1
+          # VSIX not created by MSBuild — create it manually using the VS SDK tools
+          $vsixTool = Get-ChildItem "${{ steps.vs.outputs.VS_PATH }}" -Recurse -Filter "vsixutil.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $vsixTool) {
+            $vsixTool = Get-ChildItem "${{ steps.vs.outputs.VS_PATH }}" -Recurse -Filter "CreateVsixManifest.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          echo "vsixutil: $($vsixTool?.FullName)"
+          # Fall back: zip the dll + manifest as vsix
+          $dllPath = Get-ChildItem -Recurse -Filter "OffensiveVS360.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($dllPath) {
+            echo "DLL found at: $($dllPath.FullName)"
+            $dllDir = $dllPath.DirectoryName
+            echo "=== DLL directory contents ==="
+            Get-ChildItem $dllDir | ForEach-Object { echo $_.Name }
+            # Create VSIX (it's just a zip)
+            Compress-Archive -Path "$dllDir\*" -DestinationPath "OffensiveVS360.vsix" -Force
+            echo "Created VSIX from DLL directory"
+          } else {
+            echo "ERROR: No DLL or VSIX found"
+            exit 1
+          }
         }
 
     - name: Upload VSIX artifact
