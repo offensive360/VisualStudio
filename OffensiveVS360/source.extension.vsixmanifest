@@ -4,7 +4,7 @@
     xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
   <Metadata>
     <Identity Id="OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d"
-              Version="3.0.1"
+              Version="3.0.2"
               Language="en-US"
               Publisher="Offensive360"/>
     <DisplayName>Offensive 360 Visual Studio Extension</DisplayName>

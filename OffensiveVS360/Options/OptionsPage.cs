@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using Microsoft.VisualStudio.Shell;
 
 namespace OffensiveVS360.Options
@@ -12,6 +13,7 @@ namespace OffensiveVS360.Options
         public bool ScanMalware { get; set; } = false;
     }
 
+    [Guid("D4E5F6A7-B8C9-0D1E-2F3A-4B5C6D7E8F90")]
     public class OptionsPage : DialogPage
     {
         private static OptionsPage _instance;

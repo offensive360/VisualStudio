@@ -1,12 +1,21 @@
 [$RootKey$\Packages\{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}]
-@="OffensiveVS360.OffensiveVS360Package, OffensiveVS360, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null"
+@="OffensiveVS360.OffensiveVS360Package, OffensiveVS360, Version=3.0.2.0, Culture=neutral, PublicKeyToken=null"
 "InprocServer32"="$WinDir$\SYSTEM32\MSCOREE.DLL"
 "Class"="OffensiveVS360.OffensiveVS360Package"
 "CodeBase"="$PackageFolder$\OffensiveVS360.dll"
 "AllowsBackgroundLoad"=dword:00000001
+"MenuResourceID"=dword:00000001
+
+[$RootKey$\InstalledProducts\O360 SAST]
+"Package"="{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}"
+"ProductDetails"="Enterprise static application security testing"
+"PID"="3.0"
 
 [$RootKey$\ToolsOptionsPages\O360 SAST\Settings]
 @=""
+"Package"="{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}"
+"Page"="{D4E5F6A7-B8C9-0D1E-2F3A-4B5C6D7E8F90}"
+"SupportsAutomation"=dword:00000001
 
 [$RootKey$\Packages\{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}\ToolWindows\{B2C3D4E5-F6A7-8B9C-0D1E-F2A3B4C5D6E7}]
 @="O360 Security Findings"
