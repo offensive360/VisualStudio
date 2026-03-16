@@ -1,0 +1,18 @@
+{
+  "id": "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d",
+  "version": "3.0.0",
+  "type": "Vsix",
+  "vsixId": "OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d",
+  "extensionDir": "[installdir]\\Common7\\IDE\\Extensions\\offensivevs360",
+  "files": [
+    { "fileName": "/extension.vsixmanifest", "sha256": null },
+    { "fileName": "/OffensiveVS360.dll",     "sha256": null },
+    { "fileName": "/OffensiveVS360.pkgdef",  "sha256": null },
+    { "fileName": "/Resources/logo.png",     "sha256": null },
+    { "fileName": "/README.md",              "sha256": null }
+  ],
+  "installSizes": { "targetDrive": 0 },
+  "dependencies": {
+    "Microsoft.VisualStudio.Component.CoreEditor": "[17.0,18.0)"
+  }
+}
