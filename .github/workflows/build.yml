@@ -1,0 +1,42 @@
+name: Build VSIX
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
+
+    - name: Setup NuGet
+      uses: NuGet/setup-nuget@v2
+
+    - name: Restore NuGet packages
+      run: nuget restore OffensiveVS360.sln
+
+    - name: Build Release VSIX
+      run: msbuild OffensiveVS360.sln /p:Configuration=Release /p:Platform="Any CPU" /m
+
+    - name: Find VSIX
+      id: find_vsix
+      run: |
+        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
+        echo "VSIX_PATH=$($vsix.FullName)" >> $env:GITHUB_OUTPUT
+        echo "VSIX_NAME=$($vsix.Name)" >> $env:GITHUB_OUTPUT
+        echo "Found: $($vsix.FullName)"
+
+    - name: Upload VSIX artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: OffensiveVS360-vsix
+        path: ${{ steps.find_vsix.outputs.VSIX_PATH }}
+        retention-days: 30
