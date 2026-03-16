@@ -20,67 +20,119 @@ jobs:
     - name: Setup NuGet
       uses: NuGet/setup-nuget@v2
 
-    - name: Find VS installation
+    - name: Restore NuGet packages
+      run: nuget restore OffensiveVS360.sln
+
+    - name: Find VS and compile VSCT
       id: vs
       run: |
         $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
         $vsPath = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.CoreEditor -property installationPath
         echo "VS_PATH=$vsPath" >> $env:GITHUB_OUTPUT
-        echo "Found VS at: $vsPath"
-        # List VSSDK presence
-        Get-ChildItem "$vsPath\VSSDK" -ErrorAction SilentlyContinue | Select-Object -First 5 | ForEach-Object { echo $_.FullName }
+        echo "VS: $vsPath"
 
-    - name: Restore NuGet packages
-      run: nuget restore OffensiveVS360.sln
+        # Find VSCT compiler
+        $vsct = Get-ChildItem "$vsPath" -Recurse -Filter "vsct.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($vsct) {
+          echo "VSCT: $($vsct.FullName)"
+          # Compile the VSCT to a .cto file
+          & $vsct.FullName "OffensiveVS360\OffensiveVS360Package.vsct" "OffensiveVS360\OffensiveVS360Package.cto" -nologo
+          echo "VSCT compiled: $?"
+        } else {
+          echo "WARNING: vsct.exe not found, menus may not work"
+        }
 
-    - name: Build Release VSIX
+    - name: Build Release DLL
       run: |
         msbuild OffensiveVS360.sln `
           /p:Configuration=Release `
           /p:Platform="Any CPU" `
           /p:DeployExtension=false `
-          /p:CreateVsixContainer=true `
-          /p:VsSDKInstall="${{ steps.vs.outputs.VS_PATH }}\VSSDK" `
-          /p:VsSDKToolsPath="${{ steps.vs.outputs.VS_PATH }}\VSSDK\VisualStudioIntegration\Tools\Bin" `
+          /p:CreateVsixContainer=false `
           /verbosity:minimal `
           /m
 
-    - name: List all build output
+    - name: Create VSIX package
       run: |
-        echo "=== All files under OffensiveVS360/bin ==="
-        Get-ChildItem -Recurse "OffensiveVS360\bin" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
-        echo "=== VSIX files anywhere ==="
-        Get-ChildItem -Recurse -Filter "*.vsix" -ErrorAction SilentlyContinue | ForEach-Object { echo $_.FullName }
+        $dllDir = "OffensiveVS360\bin\Release\net472"
+        $pkgDir = "vsix_staging"
+        New-Item -ItemType Directory $pkgDir -Force
+        New-Item -ItemType Directory "$pkgDir\Resources" -Force
 
-    - name: Package VSIX
-      run: |
-        # Try to find VSIX
-        $vsix = Get-ChildItem -Recurse -Filter "*.vsix" -ErrorAction SilentlyContinue | Select-Object -First 1
-        if ($vsix) {
-          echo "Found VSIX at: $($vsix.FullName)"
-          Copy-Item $vsix.FullName "OffensiveVS360.vsix"
-        } else {
-          # VSIX not created by MSBuild — create it manually using the VS SDK tools
-          $vsixTool = Get-ChildItem "${{ steps.vs.outputs.VS_PATH }}" -Recurse -Filter "vsixutil.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if (-not $vsixTool) {
-            $vsixTool = Get-ChildItem "${{ steps.vs.outputs.VS_PATH }}" -Recurse -Filter "CreateVsixManifest.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-          }
-          echo "vsixutil: $($vsixTool?.FullName)"
-          # Fall back: zip the dll + manifest as vsix
-          $dllPath = Get-ChildItem -Recurse -Filter "OffensiveVS360.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
-          if ($dllPath) {
-            echo "DLL found at: $($dllPath.FullName)"
-            $dllDir = $dllPath.DirectoryName
-            echo "=== DLL directory contents ==="
-            Get-ChildItem $dllDir | ForEach-Object { echo $_.Name }
-            # Create VSIX (it's just a zip)
-            Compress-Archive -Path "$dllDir\*" -DestinationPath "OffensiveVS360.vsix" -Force
-            echo "Created VSIX from DLL directory"
-          } else {
-            echo "ERROR: No DLL or VSIX found"
-            exit 1
-          }
+        # Copy binaries
+        Copy-Item "$dllDir\OffensiveVS360.dll" $pkgDir
+        if (Test-Path "$dllDir\Newtonsoft.Json.dll") {
+          Copy-Item "$dllDir\Newtonsoft.Json.dll" $pkgDir
         }
+        Copy-Item "OffensiveVS360\Resources\logo.png" "$pkgDir\Resources\"
+
+        # Create pkgdef file
+        @'
+[$RootKey$\Packages\{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}]
+@="OffensiveVS360.OffensiveVS360Package, OffensiveVS360, Version=3.0.0.0, Culture=neutral, PublicKeyToken=null"
+"InprocServer32"="$WinDir$\SYSTEM32\MSCOREE.DLL"
+"Class"="OffensiveVS360.OffensiveVS360Package"
+"CodeBase"="$PackageFolder$\OffensiveVS360.dll"
+"AllowsBackgroundLoad"=dword:00000001
+
+[$RootKey$\ToolsOptionsPages\O360 SAST\Settings]
+@=""
+
+[$RootKey$\Packages\{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}\ToolWindows\{B2C3D4E5-F6A7-8B9C-0D1E-F2A3B4C5D6E7}]
+@="O360 Security Findings"
+"Float"="250, 250, 600, 400"
+'@ | Out-File -FilePath "$pkgDir\OffensiveVS360.pkgdef" -Encoding utf8
+
+        # Create extension.vsixmanifest
+        $manifest = @'
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011">
+  <Metadata>
+    <Identity Id="OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d" Version="3.0.0" Language="en-US" Publisher="Offensive360" />
+    <DisplayName>Offensive 360 Visual Studio Extension</DisplayName>
+    <Description xml:space="preserve">Enterprise Static Application Security Testing (SAST) integrated into Visual Studio. Scan your solution, project, or file from the Build menu. View findings grouped by severity in the O360 Security Findings panel. Double-click to navigate to vulnerable lines. Requires an O360 SAST server endpoint and API token (Tools &gt; Options &gt; O360 SAST).</Description>
+    <MoreInfo>https://offensive360.com</MoreInfo>
+    <Icon>Resources\logo.png</Icon>
+    <Tags>security sast vulnerability appsec devsecops</Tags>
+  </Metadata>
+  <Installation InstalledByMsi="false" AllUsers="false" SystemComponent="false" Scope="PerUser">
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,18.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Professional" Version="[17.0,18.0)" />
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0,18.0)" />
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP" DisplayName="Microsoft .NET Framework" Version="[4.7.2,)" />
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[17.0,18.0)" DisplayName="Visual Studio core editor" />
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage" Path="OffensiveVS360.pkgdef" />
+    <Asset Type="Microsoft.VisualStudio.MefComponent" Path="OffensiveVS360.dll" />
+  </Assets>
+</PackageManifest>
+'@
+        $manifest | Out-File -FilePath "$pkgDir\extension.vsixmanifest" -Encoding utf8
+
+        # Create [Content_Types].xml
+        @'
+<?xml version="1.0" encoding="utf-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="dll"     ContentType="application/octet-stream" />
+  <Default Extension="pkgdef"  ContentType="text/plain" />
+  <Default Extension="png"     ContentType="image/png" />
+  <Override PartName="/extension.vsixmanifest" ContentType="text/xml" />
+</Types>
+'@ | Out-File -FilePath "$pkgDir\[Content_Types].xml" -Encoding utf8
+
+        # Show staging contents
+        echo "=== VSIX staging ==="
+        Get-ChildItem -Recurse $pkgDir | ForEach-Object { echo $_.FullName }
+
+        # Create VSIX (zip with .vsix extension)
+        Compress-Archive -Path "$pkgDir\*" -DestinationPath "OffensiveVS360.vsix" -Force
+        $size = (Get-Item "OffensiveVS360.vsix").Length / 1KB
+        echo "VSIX created: $([math]::Round($size, 1)) KB"
 
     - name: Upload VSIX artifact
       uses: actions/upload-artifact@v4
