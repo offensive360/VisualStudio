@@ -41,6 +41,7 @@ jobs:
         Copy-Item "vsix_template\extension.vsixmanifest" $staging
         Copy-Item "vsix_template\OffensiveVS360.pkgdef" $staging
         Copy-Item "vsix_template\Content_Types.xml" "$staging\[Content_Types].xml"
+        Copy-Item "README.md" $staging
 
         Get-ChildItem -Recurse $staging | ForEach-Object { Write-Host $_.FullName }
         Compress-Archive -Path "$staging\*" -DestinationPath "OffensiveVS360.vsix" -Force
@@ -53,3 +54,47 @@ jobs:
         path: OffensiveVS360.vsix
         if-no-files-found: error
         retention-days: 30
+
+    - name: Publish to Visual Studio Marketplace
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main')
+      shell: pwsh
+      env:
+        MARKETPLACE_PAT: ${{ secrets.MARKETPLACE_PAT }}
+      run: |
+        # Find VsixPublisher.exe from the Visual Studio installation
+        $vsixPublisher = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+          -latest -products * -requires Microsoft.VisualStudio.Component.VSSDK `
+          -find "VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe" 2>$null
+
+        if (-not $vsixPublisher) {
+          # Try common VS 2022 paths
+          $candidates = @(
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Enterprise\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Professional\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+            "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe",
+            "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\BuildTools\VSSDK\VisualStudioIntegration\Tools\Bin\VsixPublisher.exe"
+          )
+          foreach ($c in $candidates) {
+            if (Test-Path $c) { $vsixPublisher = $c; break }
+          }
+        }
+
+        if (-not $vsixPublisher) {
+          Write-Error "VsixPublisher.exe not found. Install Visual Studio SDK component."
+          exit 1
+        }
+
+        Write-Host "Using VsixPublisher: $vsixPublisher"
+        Write-Host "Publishing OffensiveVS360.vsix to Visual Studio Marketplace..."
+
+        & $vsixPublisher publish `
+          -payload "OffensiveVS360.vsix" `
+          -publishManifest "vsix_template\publishManifest.json" `
+          -personalAccessToken "$env:MARKETPLACE_PAT" `
+          -ignoreWarnings "VSIXValidatorWarning01,VSIXValidatorWarning02,VSIXValidatorWarning03"
+
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "VsixPublisher failed with exit code $LASTEXITCODE"
+          exit $LASTEXITCODE
+        }
+        Write-Host "Successfully published to Visual Studio Marketplace."

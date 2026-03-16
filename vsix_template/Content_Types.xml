@@ -4,4 +4,5 @@
   <Default Extension="pkgdef"  ContentType="text/plain" />
   <Default Extension="png"     ContentType="image/png" />
   <Override PartName="/extension.vsixmanifest" ContentType="text/xml" />
+  <Default Extension="md" ContentType="text/markdown" />
 </Types>

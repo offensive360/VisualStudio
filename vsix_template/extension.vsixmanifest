@@ -26,5 +26,6 @@ Requires an O360 SAST server endpoint and API token.</Description>
   <Assets>
     <Asset Type="Microsoft.VisualStudio.VsPackage" Path="OffensiveVS360.pkgdef" />
     <Asset Type="Microsoft.VisualStudio.MefComponent" Path="OffensiveVS360.dll" />
+    <Asset Type="Microsoft.VisualStudio.Services.Content.Details" Path="README.md" />
   </Assets>
 </PackageManifest>

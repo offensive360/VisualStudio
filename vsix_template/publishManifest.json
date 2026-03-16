@@ -1,0 +1,23 @@
+{
+  "categories": [
+    "Tools",
+    "Tools/Coding",
+    "Tools/Programming Languages"
+  ],
+  "priceCategory": "free",
+  "galleryFlags": [
+    "public"
+  ],
+  "identity": {
+    "internalName": "OffensiveVS360"
+  },
+  "overview": "README.md",
+  "publisher": "Offensive360",
+  "tags": [
+    "security",
+    "sast",
+    "vulnerability",
+    "appsec",
+    "devsecops"
+  ]
+}
