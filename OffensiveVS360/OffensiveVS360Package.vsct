@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable"
+              xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <Extern href="stdidcmd.h"/>
+  <Extern href="vsshlids.h"/>
+
+  <Commands package="guidOffensiveVS360Package">
+    <Groups>
+      <!-- Build menu group -->
+      <Group guid="guidO360CmdSet" id="grpO360Build" priority="0x0800">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_BUILD"/>
+      </Group>
+      <!-- View > Other Windows group -->
+      <Group guid="guidO360CmdSet" id="grpO360View" priority="0x0100">
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_VIEW_TOOLWINDOWS"/>
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <!-- Build menu: Scan Solution -->
+      <Button guid="guidO360CmdSet" id="cmdScanSolution" priority="0x0100" type="Button">
+        <Parent guid="guidO360CmdSet" id="grpO360Build"/>
+        <Icon guid="guidImages" id="bmpScan"/>
+        <CommandFlag>AllowParams</CommandFlag>
+        <Strings>
+          <ButtonText>Scan Solution with O360 SAST</ButtonText>
+          <ToolTipText>Scan the entire solution for security vulnerabilities</ToolTipText>
+        </Strings>
+      </Button>
+
+      <!-- Build menu: Scan Active Project -->
+      <Button guid="guidO360CmdSet" id="cmdScanProject" priority="0x0101" type="Button">
+        <Parent guid="guidO360CmdSet" id="grpO360Build"/>
+        <Strings>
+          <ButtonText>Scan Active Project with O360 SAST</ButtonText>
+          <ToolTipText>Scan the active project for security vulnerabilities</ToolTipText>
+        </Strings>
+      </Button>
+
+      <!-- Build menu: Scan Active File -->
+      <Button guid="guidO360CmdSet" id="cmdScanFile" priority="0x0102" type="Button">
+        <Parent guid="guidO360CmdSet" id="grpO360Build"/>
+        <Strings>
+          <ButtonText>Scan Active File with O360 SAST</ButtonText>
+          <ToolTipText>Scan the currently open file for security vulnerabilities</ToolTipText>
+        </Strings>
+      </Button>
+
+      <!-- Build menu: Clear Findings -->
+      <Button guid="guidO360CmdSet" id="cmdClearFindings" priority="0x0103" type="Button">
+        <Parent guid="guidO360CmdSet" id="grpO360Build"/>
+        <Strings>
+          <ButtonText>Clear O360 SAST Findings</ButtonText>
+        </Strings>
+      </Button>
+
+      <!-- View menu: Show Findings Window -->
+      <Button guid="guidO360CmdSet" id="cmdShowFindings" priority="0x0100" type="Button">
+        <Parent guid="guidO360CmdSet" id="grpO360View"/>
+        <Strings>
+          <ButtonText>O360 Security Findings</ButtonText>
+          <ToolTipText>Show the O360 Security Findings panel</ToolTipText>
+        </Strings>
+      </Button>
+    </Buttons>
+
+    <Bitmaps>
+      <Bitmap guid="guidImages" href="Resources\logo.png" usedList="bmpScan"/>
+    </Bitmaps>
+  </Commands>
+
+  <Symbols>
+    <GuidSymbol name="guidOffensiveVS360Package" value="{F5A2D3B1-C8E9-4F7A-B2D3-E5F6A7B8C9D0}"/>
+    <GuidSymbol name="guidO360CmdSet" value="{A1B2C3D4-E5F6-7A8B-9C0D-E1F2A3B4C5D6}">
+      <IDSymbol name="grpO360Build"     value="0x1010"/>
+      <IDSymbol name="grpO360View"      value="0x1011"/>
+      <IDSymbol name="cmdScanSolution"  value="0x0100"/>
+      <IDSymbol name="cmdScanProject"   value="0x0101"/>
+      <IDSymbol name="cmdScanFile"      value="0x0102"/>
+      <IDSymbol name="cmdClearFindings" value="0x0103"/>
+      <IDSymbol name="cmdShowFindings"  value="0x0104"/>
+    </GuidSymbol>
+    <GuidSymbol name="guidImages" value="{C3D4E5F6-A7B8-9012-CDEF-123456789012}">
+      <IDSymbol name="bmpScan" value="1"/>
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

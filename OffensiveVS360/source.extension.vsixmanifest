@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PackageManifest Version="2.0.0"
+    xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011"
+    xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
+  <Metadata>
+    <Identity Id="OffensiveVS360.Offensive360.3a8b4c5d-6e7f-8a9b-0c1d-2e3f4a5b6c7d"
+              Version="3.0.0"
+              Language="en-US"
+              Publisher="Offensive360"/>
+    <DisplayName>Offensive 360 Visual Studio Extension</DisplayName>
+    <Description xml:space="preserve">
+Enterprise Static Application Security Testing (SAST) integrated directly into Visual Studio.
+
+Features:
+• Scan your entire solution, a single project, or just the active file
+• Real-time queue status and progress updates in the status bar
+• Security Findings panel — findings grouped and sorted by severity
+• Double-click any finding to navigate directly to the vulnerable line
+• Detailed fix recommendations and code snippets in the findings panel
+• Dependency (SCA), license, and malware scanning options
+• Configurable via Tools → Options → O360 SAST
+
+Requires an O360 SAST server and API token.
+    </Description>
+    <MoreInfo>https://offensive360.com</MoreInfo>
+    <License>offensive-license-terms.md</License>
+    <Icon>Resources\logo.png</Icon>
+    <PreviewImage>Resources\logo.png</PreviewImage>
+    <Tags>security, sast, static analysis, vulnerability, appsec, devsecops</Tags>
+    <GettingStartedGuide>https://offensive360.com/docs/visual-studio</GettingStartedGuide>
+  </Metadata>
+  <Installation InstalledByMsi="false" AllUsers="false" SystemComponent="false" Scope="PerUser">
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,18.0)"/>
+    <InstallationTarget Id="Microsoft.VisualStudio.Professional" Version="[17.0,18.0)"/>
+    <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0,18.0)"/>
+  </Installation>
+  <Dependencies>
+    <Dependency Id="Microsoft.Framework.NDP"
+                DisplayName="Microsoft .NET Framework"
+                d:Source="Auto"
+                Version="[4.7.2,)"/>
+  </Dependencies>
+  <Prerequisites>
+    <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor"
+                  Version="[17.0,18.0)"
+                  DisplayName="Visual Studio core editor"/>
+  </Prerequisites>
+  <Assets>
+    <Asset Type="Microsoft.VisualStudio.VsPackage"
+           d:Source="Project"
+           d:ProjectName="%CurrentProject%"
+           Path="|OffensiveVS360;PkgdefProjectOutputGroup|"/>
+    <Asset Type="Microsoft.VisualStudio.MefComponent"
+           d:Source="Project"
+           d:ProjectName="%CurrentProject%"
+           Path="|OffensiveVS360|"/>
+  </Assets>
+</PackageManifest>
