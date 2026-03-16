@@ -7,7 +7,8 @@
   "files": [
     { "fileName": "/extension.vsixmanifest", "sha256": null },
     { "fileName": "/OffensiveVS360.dll",     "sha256": null },
-    { "fileName": "/OffensiveVS360.pkgdef",  "sha256": null },
+    { "fileName": "/Newtonsoft.Json.dll",   "sha256": null },
+    { "fileName": "/OffensiveVS360.pkgdef", "sha256": null },
     { "fileName": "/Resources/logo.png",     "sha256": null },
     { "fileName": "/README.md",              "sha256": null }
   ],
