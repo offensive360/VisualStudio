@@ -30,6 +30,10 @@ jobs:
     - name: Locate and copy VSIX
       shell: pwsh
       run: |
+        Write-Host "=== Searching for VSIX files ==="
+        Get-ChildItem -Recurse -Filter "*.vsix" | ForEach-Object { Write-Host $_.FullName }
+        Write-Host "=== bin/Release contents ==="
+        Get-ChildItem -Recurse "OffensiveVS360\bin\Release" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
         $vsix = Get-ChildItem -Recurse -Filter "*.vsix" | Select-Object -First 1
         if (-not $vsix) {
           Write-Error "No .vsix file found after build"
