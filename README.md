@@ -1,6 +1,20 @@
-# Offensive360 SAST - Visual Studio Extension
+# Offensive360 SAST for Visual Studio
 
-Offensive360 SAST (Static Application Security Testing) extension for Visual Studio. Scan your source code for security vulnerabilities directly from within the IDE, with results integrated into your development workflow.
+Enterprise SAST (Static Application Security Testing) scanning integrated directly into Visual Studio 2022. Scan your source code for security vulnerabilities without leaving your IDE, with results displayed in the familiar Error List window.
+
+## Screenshots
+
+### Visual Studio with Offensive360 Extension
+![Offensive360 Extension Overview](https://raw.githubusercontent.com/offensive360/VisualStudio/main/images/overview.png)
+
+### Launching a Scan from the Build Menu
+![Build Menu - Offensive 360 Scan](https://raw.githubusercontent.com/offensive360/VisualStudio/main/images/build-menu.png)
+
+### Scan in Progress
+![Scan In Progress](https://raw.githubusercontent.com/offensive360/VisualStudio/main/images/scan-progress.png)
+
+### Scan Results in the Error List
+![Scan Results](https://raw.githubusercontent.com/offensive360/VisualStudio/main/images/scan-results.png)
 
 ## Features
 
