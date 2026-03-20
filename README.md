@@ -78,7 +78,7 @@ Results are displayed in the **Error List** window with the following informatio
 
 ## Supported Languages
 
-For a full list of supported languages, visit [offensive360.com](https://offensive360.com).
+C#, Java, JavaScript, TypeScript, Python, PHP, Go, Ruby, Kotlin, Swift, Objective-C, Dart/Flutter, C/C++, Apex, and more. For a full list of supported languages, visit [offensive360.com](https://offensive360.com).
 
 ## License
 
