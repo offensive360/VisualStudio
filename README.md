@@ -87,4 +87,4 @@ Copyright (c) Offensive360. All rights reserved.
 ## Links
 
 - Website: [https://offensive360.com](https://offensive360.com)
-- Support: support@offensive360.com
+- Contact Us: https://offensive360.com/contact
