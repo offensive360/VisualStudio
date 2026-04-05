@@ -450,6 +450,8 @@ namespace Offensive360.VSExt.Helpers
             try
             {
                 var errorTask = sender as ErrorTask;
+                if (errorTask == null) return;
+
                 var solutionFolder = GetSolutionFolderPath(currentFilePath);
                 var filePath = System.IO.Path.Combine(solutionFolder, errorTask.Document);
 
@@ -459,10 +461,22 @@ namespace Offensive360.VSExt.Helpers
                     filePath = errorTask.Document;
                 }
 
-                var dte = (EnvDTE.DTE)Marshal.GetActiveObject("VisualStudio.DTE");
+                if (!System.IO.File.Exists(filePath))
+                {
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: File not found — {filePath}");
+                    return;
+                }
+
+                // Use ServiceProvider to get DTE from current VS instance (Marshal.GetActiveObject is unreliable in VS 2022)
+                var dte = (EnvDTE.DTE)Package.GetGlobalService(typeof(EnvDTE.DTE));
+                if (dte == null) return;
+
                 dte.MainWindow.Activate();
                 EnvDTE.Window w = dte.ItemOperations.OpenFile(filePath, EnvDTE.Constants.vsViewKindTextView);
-                ((EnvDTE.TextSelection)dte.ActiveDocument.Selection).GotoLine((errorTask.Line + 1), true);
+                if (dte.ActiveDocument?.Selection is EnvDTE.TextSelection selection)
+                {
+                    selection.GotoLine(errorTask.Line + 1, true);
+                }
             }
             catch (Exception ex)
             {
