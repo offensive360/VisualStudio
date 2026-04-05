@@ -7,6 +7,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -19,10 +20,26 @@ namespace Offensive360.VSExt.Helpers
     internal static class SastHelper
     {
         private const string projectScanMessagePrefix = "Offensive 360 project scanning";
+        private const long MaxFileSizeBytes = 50L * 1024 * 1024; // 50 MB per-file limit
+        private const int LargeProjectFileThreshold = 5000;
 
+        private static bool _scanInProgress = false;
         private static string currentFilePath;
+        private static string scanFileEndpoint = "/app/api/Project/scanProjectFile";
         private static string externalScanEndpoint = "/app/api/ExternalScan";
-        private static string queuePosEndpoint = $"{externalScanEndpoint}/scanQueuePosition";
+        private static string projectEndpoint = "/app/api/Project";
+
+        /// <summary>
+        /// Creates an HttpClientHandler that accepts self-signed certificates
+        /// when the server uses HTTPS with a non-trusted CA.
+        /// </summary>
+        private static HttpClientHandler CreateHandler()
+        {
+            return new HttpClientHandler
+            {
+                ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
+            };
+        }
 
         public static string IgnoreFilePath(string solutionPath)
         {
@@ -41,27 +58,169 @@ namespace Offensive360.VSExt.Helpers
 
         public static async Task ScanProjectAndShowVulnerabilitiesAsync(this ErrorListProvider _errorListProvider, IVsStatusbar statusBar, string solutionFilePath)
         {
+            if (_scanInProgress)
+            {
+                throw new InvalidOperationException("A scan is already in progress. Please wait for it to complete.");
+            }
+
+            _scanInProgress = true;
             try
             {
+                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ValidateSettings...\n"); } catch {}
                 await ValidateSettingsAsync();
+                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Validation passed!\n"); } catch {}
 
-                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} is queued");
+                var solutionFolder = GetSolutionFolderPath(solutionFilePath);
+                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] SolutionFolder: {solutionFolder}\n"); } catch {}
 
-                var (formData, projectName) = GetMultipartFormData(folderPath: GetSolutionFolderPath(solutionFilePath));
+                // --- Incremental diff: compute on background thread to avoid UI freeze ---
+                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 1/5] Validating settings...");
+                var cached = ScanCache.Load(solutionFolder);
 
-                var scanProcess = PostAsync<ScanResponse>($"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}", formData);
+                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 2/5] Checking for changes...");
+                var diff = await ScanCache.ComputeIncrementalDiffAsync(solutionFolder, cached);
 
-                await _errorListProvider.WaitAndShowQueuePositionAsync(statusBar, projectName, projectScanMessagePrefix);
+                if (!diff.HasChanges && cached != null)
+                {
+                    // No files changed — use cached results directly
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} — No changes detected, loading cached results...");
 
-                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} is in-progress");
+                    var ignoredCached = File.Exists(IgnoreFilePath(solutionFilePath)) ? File.ReadAllLines(IgnoreFilePath(solutionFilePath)) : new string[0];
+                    foreach (var vulnerability in cached.Vulnerabilities)
+                    {
+                        var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
+                        if (!ignoredCached.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
+                        {
+                            Log(_errorListProvider, vulnerability);
+                        }
+                    }
 
-                var scanResponse = await scanProcess;
+                    currentFilePath = solutionFilePath;
+                    _errorListProvider.Show();
+                    _errorListProvider.ForceShowErrors();
+                    await statusBar.HideProgressAsync();
+                    return;
+                }
 
-                formData.Dispose();
+                bool isIncremental = cached != null && diff.ChangedRelativePaths.Count < diff.CurrentHashes.Count;
+                var changedCount = diff.ChangedRelativePaths.Count;
+                var totalCount = diff.CurrentHashes.Count;
+
+                if (isIncremental)
+                {
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Preparing {changedCount} changed files (of {totalCount} total)...");
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: Incremental scan — {changedCount} changed files out of {totalCount} total.");
+                }
+                else
+                {
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Preparing {totalCount} files for full scan...");
+                    if (totalCount > LargeProjectFileThreshold)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"Offensive360: Large project detected ({totalCount} files). Scan may take longer.");
+                    }
+                }
+                string zipPath;
+                if (isIncremental)
+                {
+                    zipPath = await Task.Run(() => ZipSpecificFiles(solutionFolder, diff.ChangedRelativePaths));
+                }
+                else
+                {
+                    zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
+                }
+                _tempZipPath = zipPath;
+
+                // Warn about large uploads
+                var zipSizeMb = new FileInfo(zipPath).Length / (1024 * 1024);
+                if (zipSizeMb > 200)
+                {
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Large upload ({zipSizeMb}MB) — this may take several minutes...");
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: Large zip file ({zipSizeMb}MB). Upload may take longer.");
+                }
+
+                var projectName = solutionFolder.TrimEnd('\\', '/').Split('\\').Last();
+                projectName = projectName?.Length > 13 ? projectName.Substring(0, 13) : projectName;
+                projectName = $"{projectName}_{Guid.NewGuid()}";
+
+                ScanResponse scanResponse = null;
+
+                // Use ExternalScan directly (same as VSCode plugin — most compatible path).
+                try
+                {
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Uploading ({(new FileInfo(zipPath).Length / 1024):N0} KB)...");
+                    var extEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}";
+                    var (extHttpCode, extBody) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, zipPath, projectName);
+
+                    if (extHttpCode == 0)
+                    {
+                        throw new HttpRequestException("Cannot connect to the server. Check your endpoint URL and network connection.");
+                    }
+                    if (extHttpCode == 401 || extHttpCode == 403)
+                    {
+                        throw new UnauthorizedAccessException(
+                            "Your access token is invalid or expired (HTTP " + extHttpCode + ").\n\n" +
+                            "Please ask your O360 administrator to generate a new External token from:\n" +
+                            "Dashboard > Settings > Tokens\n\n" +
+                            "Then update it in Tools > Options > Offensive360.");
+                    }
+                    if (extHttpCode == 429)
+                    {
+                        throw new HttpRequestException("Server is rate-limiting requests (HTTP 429). Please wait a minute and try again.");
+                    }
+                    if (extHttpCode >= 500)
+                    {
+                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}). The server may be overloaded — try again in a minute.\n\nServer response: {extBody}");
+                    }
+                    if (extHttpCode < 200 || extHttpCode >= 300)
+                    {
+                        throw new HttpRequestException($"Server returned HTTP {extHttpCode}. Check your endpoint URL and access token.");
+                    }
+
+                    scanResponse = JsonConvert.DeserializeObject<ScanResponse>(extBody);
+                    if (scanResponse?.Vulnerabilities == null)
+                    {
+                        scanResponse = new ScanResponse { Vulnerabilities = new List<VulnerabilityResponse>() };
+                    }
+
+                    // Clean up server-side project
+                    try
+                    {
+                        var extJson = Newtonsoft.Json.Linq.JObject.Parse(extBody);
+                        var extProjectId = extJson.Value<string>("projectId");
+                        if (!string.IsNullOrEmpty(extProjectId))
+                        {
+                            await DeleteProjectAsync(extProjectId);
+                        }
+                    }
+                    catch { /* best-effort cleanup */ }
+                }
+                finally
+                {
+                    try { if (zipPath != null && File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+                }
+
+                // --- Merge results: incremental scan merges with cached, full scan replaces ---
+                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 5/5] Processing results...");
+                List<VulnerabilityResponse> finalVulnerabilities;
+                if (isIncremental)
+                {
+                    finalVulnerabilities = ScanCache.MergeResults(
+                        cached,
+                        scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>(),
+                        diff.ChangedRelativePaths,
+                        diff.DeletedRelativePaths);
+                }
+                else
+                {
+                    finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
+                }
+
+                // Save merged results + current hashes to cache
+                ScanCache.Save(solutionFolder, finalVulnerabilities, diff.CurrentHashes);
 
                 var ignoredVulnerabilities = File.Exists(IgnoreFilePath(solutionFilePath)) ? File.ReadAllLines(IgnoreFilePath(solutionFilePath)) : new string[0];
 
-                foreach (var vulnerability in scanResponse.Vulnerabilities)
+                foreach (var vulnerability in finalVulnerabilities)
                 {
                     var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
 
@@ -72,12 +231,44 @@ namespace Offensive360.VSExt.Helpers
                 }
 
                 currentFilePath = solutionFilePath;
+                _errorListProvider.Show();  // Force Error List window to open
+                _errorListProvider.ForceShowErrors();  // Ensure errors/warnings/messages are visible
+
+                // --- Completion summary ---
+                var displayedCount = _errorListProvider.Tasks.Count;
+                var totalFound = finalVulnerabilities.Count;
+                var suppressedCount = totalFound - displayedCount;
+                var summaryParts = new List<string>();
+
+                // Count by severity
+                var critical = finalVulnerabilities.Count(v => NormalizeRiskLevel(v.RiskLevel) == "CRITICAL");
+                var high = finalVulnerabilities.Count(v => NormalizeRiskLevel(v.RiskLevel) == "HIGH");
+                var medium = finalVulnerabilities.Count(v => NormalizeRiskLevel(v.RiskLevel) == "MEDIUM");
+                var low = finalVulnerabilities.Count(v => NormalizeRiskLevel(v.RiskLevel) == "LOW");
+
+                if (critical > 0) summaryParts.Add($"{critical} Critical");
+                if (high > 0) summaryParts.Add($"{high} High");
+                if (medium > 0) summaryParts.Add($"{medium} Medium");
+                if (low > 0) summaryParts.Add($"{low} Low");
+
+                var severityBreakdown = summaryParts.Count > 0 ? string.Join(", ", summaryParts) : "none";
+                var suppressedNote = suppressedCount > 0 ? $" ({suppressedCount} suppressed)" : "";
+
+                await statusBar.ShowProgressAsync(
+                    $"O360 Scan Complete — {displayedCount} vulnerabilities found: {severityBreakdown}{suppressedNote}");
+
+                // Keep the summary visible for a few seconds, then clear
+                await Task.Delay(5000);
+                await statusBar.HideProgressAsync();
             }
             catch
             {
                 await statusBar.HideProgressAsync();
-
                 throw;
+            }
+            finally
+            {
+                _scanInProgress = false;
             }
         }
         
@@ -86,7 +277,7 @@ namespace Offensive360.VSExt.Helpers
             _errorListProvider.Tasks.Add(new ErrorTask()
             {
                 ErrorCategory = TaskErrorCategory.Warning,
-                Category = TaskCategory.All,
+                Category = TaskCategory.CodeSense,
                 Text = errorMessage,
                 Document = fileName
             });
@@ -117,14 +308,29 @@ namespace Offensive360.VSExt.Helpers
             statusBar.Clear();
         }
 
+        /// <summary>
+        /// Forces the Error List to show all categories (errors, warnings, messages)
+        /// so O360 findings are visible regardless of the user's current filter.
+        /// </summary>
+        public static void ForceShowErrors(this ErrorListProvider provider)
+        {
+            try
+            {
+                ThreadHelper.ThrowIfNotOnUIThread();
+                var dte = (EnvDTE.DTE)Marshal.GetActiveObject("VisualStudio.DTE");
+                dte.ExecuteCommand("View.ErrorList");
+            }
+            catch { /* Error List may already be visible */ }
+        }
+
         private static void Log(ErrorListProvider _errorListProvider, VulnerabilityResponse vulnerability)
         {
             var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
 
             var errorTask = new ErrorTask
             {
-                ErrorCategory = TaskErrorCategory.Warning,
-                Category = TaskCategory.All,
+                ErrorCategory = GetErrorCategory(vulnerability.RiskLevel),
+                Category = TaskCategory.CodeSense,
                 Text = $"[{vulnerability.Title}] {vulnerability.Vulnerability}" ,
                 Document = vulnerability.FilePath,
                 Line = lineNo - 1,
@@ -151,33 +357,109 @@ namespace Offensive360.VSExt.Helpers
 
         private static void ErrorTask_Help(object sender, EventArgs e)
         {
-            throw new NotImplementedException();
+            var errorTask = sender as ErrorTask;
+            if (errorTask == null) return;
+
+            // Extract vulnerability type from error text: [Type] Description
+            string vulnType = "";
+            if (errorTask.Text != null && errorTask.Text.StartsWith("["))
+            {
+                var endBracket = errorTask.Text.IndexOf(']');
+                if (endBracket > 1)
+                {
+                    vulnType = errorTask.Text.Substring(1, endBracket - 1);
+                }
+            }
+
+            // Try knowledge base first — open the rich dialog
+            var kbEntry = VulnerabilityKnowledgeBase.Lookup(vulnType);
+            if (kbEntry != null)
+            {
+                var dialog = new FixGuidanceDialog(
+                    kbEntry,
+                    errorTask.Text,
+                    errorTask.Document,
+                    errorTask.Line + 1,
+                    errorTask.HelpKeyword);
+                dialog.ShowFixTab();
+                dialog.ShowDialog();
+                return;
+            }
+
+            // Fallback: open filtered reference URLs with user confirmation
+            string helpLink = errorTask.HelpKeyword;
+            var urls = !string.IsNullOrWhiteSpace(helpLink)
+                ? VulnerabilityKnowledgeBase.FilterReferences(helpLink)
+                : new System.Collections.Generic.List<string>();
+
+            if (urls.Count > 0)
+            {
+                var result = System.Windows.MessageBox.Show(
+                    $"No built-in fix guidance for \"{vulnType}\".\n\nWould you like to open the reference link?\n\n{urls[0]}",
+                    "Potential Fix — " + vulnType,
+                    System.Windows.MessageBoxButton.YesNo,
+                    System.Windows.MessageBoxImage.Information);
+                if (result == System.Windows.MessageBoxResult.Yes)
+                {
+                    try { Process.Start(new ProcessStartInfo { FileName = urls[0], UseShellExecute = true }); } catch { }
+                }
+            }
+            else
+            {
+                System.Windows.MessageBox.Show(
+                    $"No built-in fix guidance available for:\n\n  \"{vulnType}\"\n\nCheck the Offensive360 dashboard for detailed analysis.",
+                    "Potential Fix",
+                    System.Windows.MessageBoxButton.OK,
+                    System.Windows.MessageBoxImage.Information);
+            }
         }
 
         private static void OnErrorTaskClick(object sender, EventArgs e)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
-
             try
             {
                 var errorTask = sender as ErrorTask;
+                var solutionFolder = GetSolutionFolderPath(currentFilePath);
+                var filePath = System.IO.Path.Combine(solutionFolder, errorTask.Document);
+
+                if (!System.IO.File.Exists(filePath))
+                {
+                    // Try the document path as-is (might be absolute)
+                    filePath = errorTask.Document;
+                }
+
                 var dte = (EnvDTE.DTE)Marshal.GetActiveObject("VisualStudio.DTE");
                 dte.MainWindow.Activate();
-
-                var filePath = $"{currentFilePath.Replace(currentFilePath.Split('\\').Last(), "")}{errorTask.Document}";
-
                 EnvDTE.Window w = dte.ItemOperations.OpenFile(filePath, EnvDTE.Constants.vsViewKindTextView);
                 ((EnvDTE.TextSelection)dte.ActiveDocument.Selection).GotoLine((errorTask.Line + 1), true);
             }
-            catch
+            catch (Exception ex)
             {
-                //DO Something
+                System.Diagnostics.Debug.WriteLine($"Offensive360: Navigation failed — {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Normalizes risk level from either string ("CRITICAL") or numeric ("4") format.
+        /// </summary>
+        private static string NormalizeRiskLevel(string riskLevel)
+        {
+            if (string.IsNullOrEmpty(riskLevel)) return "MEDIUM";
+            switch (riskLevel.Trim())
+            {
+                case "0": return "SAFE";
+                case "1": return "LOW";
+                case "2": return "MEDIUM";
+                case "3": return "HIGH";
+                case "4": return "CRITICAL";
+                default: return riskLevel.ToUpper();
             }
         }
 
         private static TaskPriority GetTaskPriority(string riskLevel)
         {
-            switch (riskLevel?.ToUpper())
+            switch (NormalizeRiskLevel(riskLevel))
             {
                 case "CRITICAL":
                 case "HIGH":
@@ -191,9 +473,26 @@ namespace Offensive360.VSExt.Helpers
             return TaskPriority.Normal;
         }
 
+        private static TaskErrorCategory GetErrorCategory(string riskLevel)
+        {
+            switch (NormalizeRiskLevel(riskLevel))
+            {
+                case "CRITICAL":
+                    return TaskErrorCategory.Error;    // Red icon
+                case "HIGH":
+                    return TaskErrorCategory.Warning;  // Amber icon
+                case "MEDIUM":
+                    return TaskErrorCategory.Message;  // Blue icon
+                case "LOW":
+                    return TaskErrorCategory.Message;  // Blue/info icon (closest to green)
+            }
+
+            return TaskErrorCategory.Warning;
+        }
+
         private static async Task<T> PostAsync<T>(string sastEndpoint, HttpContent formData)
         {
-            using (var client = new HttpClient())
+            using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
             {
                 client.Timeout = TimeSpan.FromMinutes(60);
 
@@ -218,7 +517,7 @@ namespace Offensive360.VSExt.Helpers
 
         private static async Task<T> GetAsync<T>(string sastEndpoint)
         {
-            using (var client = new HttpClient())
+            using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
             {
                 var req = new HttpRequestMessage
                 {
@@ -238,92 +537,182 @@ namespace Offensive360.VSExt.Helpers
             }
         }
 
-        private static async Task<bool> VerifySastAuthorizationAsync(string sastEndpoint)
+        private class AuthResult
         {
-            using (var client = new HttpClient())
+            public bool IsAuthorized { get; set; }
+            public int? StatusCode { get; set; }
+            public bool IsNetworkError { get; set; }
+        }
+
+        private static async Task<AuthResult> VerifySastAuthorizationAsync(string sastEndpoint)
+        {
+            try
             {
-                var req = new HttpRequestMessage
+                using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
                 {
-                    RequestUri = new Uri(sastEndpoint),
-                    Method = HttpMethod.Get
+                    client.Timeout = TimeSpan.FromSeconds(15);
+
+                    var req = new HttpRequestMessage
+                    {
+                        RequestUri = new Uri(sastEndpoint),
+                        Method = HttpMethod.Get
+                    };
+
+                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+
+                    var response = await client.SendAsync(req);
+                    var statusCode = (int)response.StatusCode;
+
+                    return new AuthResult
+                    {
+                        IsAuthorized = response.IsSuccessStatusCode,
+                        StatusCode = statusCode,
+                        IsNetworkError = false
+                    };
+                }
+            }
+            catch (Exception)
+            {
+                return new AuthResult
+                {
+                    IsAuthorized = false,
+                    StatusCode = null,
+                    IsNetworkError = true
                 };
-
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
-
-                var response = await client.SendAsync(req);
-
-                return !(response.StatusCode == HttpStatusCode.Unauthorized || response.StatusCode == HttpStatusCode.Forbidden);
             }
         }
 
+        private static string _tempZipPath;
+
         private static (MultipartFormDataContent, string) GetMultipartFormData(string folderPath = null)
         {
-            byte[] zipContent = null;
             var projectName = "";
 
-            if (folderPath != null)
-            {
-                zipContent = ZipFolders(folderPath);
-            }
+            if (folderPath == null) return (new MultipartFormDataContent(), projectName);
+
+            // Zip to temp file (supports large projects 500MB+)
+            _tempZipPath = ZipFolderToFile(folderPath);
 
             var formData = new MultipartFormDataContent();
-            var content = new ByteArrayContent(zipContent);
-            content.Headers.ContentType = MediaTypeHeaderValue.Parse("multipart/form-data");
 
-            if (folderPath != null)
-            {
-                projectName = folderPath.Substring(0, folderPath.Length - 1).Split('\\').Last();
-                projectName = projectName?.Length > 13 ? projectName.Substring(0, 13) : projectName;
-                projectName = $"{projectName}_{Guid.NewGuid()}";
+            projectName = folderPath.TrimEnd('\\', '/').Split('\\').Last();
+            projectName = projectName?.Length > 13 ? projectName.Substring(0, 13) : projectName;
+            projectName = $"{projectName}_{Guid.NewGuid()}";
 
-                formData.Add(content, "\"FileSource\"", Path.GetFileName($"{projectName}_{Guid.NewGuid()}.zip"));
-                formData.Add(new StringContent(projectName), "\"Name\"");
-                formData.Add(new StringContent("True"), "\"KeepInvisibleAndDeletePostScan\"");
-                formData.Add(new StringContent("VsExtension"), "\"ExternalScanSourceType\"");
-            }
+            var fileStream = new FileStream(_tempZipPath, FileMode.Open, FileAccess.Read);
+            var streamContent = new StreamContent(fileStream);
+            streamContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
+
+            formData.Add(streamContent, "\"fileSource\"", $"{projectName}.zip");
+            formData.Add(new StringContent(projectName), "\"name\"");
+            formData.Add(new StringContent("VsExtension"), "\"externalScanSourceType\"");
+            formData.Add(new StringContent("True"), "\"keepInvisibleAndDeletePostScan\"");
 
             return (formData, projectName);
         }
 
-        private static byte[] ZipFolders(string folderPath)
+        /// <summary>
+        /// Zips a folder to a temporary file on disk (supports large projects 500MB+).
+        /// Returns the path to the temp zip file. Caller must delete after use.
+        /// </summary>
+        private static string ZipFolderToFile(string folderPath)
         {
-            if (Directory.Exists(folderPath))
+            if (!Directory.Exists(folderPath)) return null;
+
+            var tempFile = Path.GetTempFileName();
+            File.Delete(tempFile);
+            tempFile = Path.ChangeExtension(tempFile, ".zip");
+
+            var from = new DirectoryInfo(folderPath);
+
+            using (var zipStream = new FileStream(tempFile, FileMode.Create))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                var from = new DirectoryInfo(folderPath);
-
-                using (var zipToOpen = new MemoryStream())
+                foreach (var file in Directory.EnumerateFiles(folderPath, "*", SearchOption.AllDirectories))
                 {
-                    using (var archive = new ZipArchive(zipToOpen, ZipArchiveMode.Create))
+                    var ext = Path.GetExtension(file);
+                    if (ScanCache.ExcludeExts.Contains(ext)) continue;
+
+                    var relativePath = file.Substring(from.FullName.Length).TrimStart('\\', '/');
+                    var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Any(p => ScanCache.ExcludeFolders.Contains(p))) continue;
+
+                    try
                     {
-                        var exludeFileExtensions = new string[] { ".zip", ".dll", ".pdf", ".txt", ".exe", ".DS_Store", ".ipr", ".iws", ".bak", ".tmp", ".aac", ".aif", ".iff", ".m3u", ".mid", ".mp3", ".mpa", ".ra", ".wav", ".wma", ".3g2", ".3gp", ".asf", ".asx", ".avi", ".flv", ".mov", ".mp4", ".mpg", ".rm", ".swf", ".vob", ".wmv", ".bmp", ".gif", ".jpg", ".png", ".psd", ".tif", ".swf", ".jar", ".zip", ".rar", ".exe", ".dll", ".pdb", ".7z", ".gz", ".tar.gz", ".tar", ".gz", ".ahtm", ".ahtml", ".fhtml", ".hdm", ".hdml", ".hsql", ".ht", ".hta", ".htc", ".htd", ".war", ".ear", ".htmls", ".ihtml", ".mht", ".mhtm", ".mhtml", ".ssi", ".stm", ".stml", ".ttml", ".txn", ".xhtm", ".xhtml", ".class", ".iml" };
+                        var fileInfo = new FileInfo(file);
+                        if (fileInfo.Length > MaxFileSizeBytes) continue;
 
-                        var excludeSystemFiles = new string[] { "upgradelog.htm" };
-
-                        var excludeSystemFolders = new string[] { ".vs", "cvs", ".svn", ".hg", ".git", ".bzr", "bin", "obj", "backup", ".idea", ".vscode", "node_modules" };
-
-                        var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories)
-                                                .Where(f =>
-                                                    !exludeFileExtensions.Contains(Path.GetExtension(f).ToLowerInvariant()) &&
-                                                    !excludeSystemFiles.Contains(f.ToLowerInvariant().Split('\\').Last()) &&
-                                                    !excludeSystemFolders.Any(e => f.ToLowerInvariant().Contains($"\\{e}\\")));
-
-                        foreach (var file in files)
-                        {
-                            var relPath = file.Substring(from.FullName.Length).Replace("\\", "/");
-                            var readmeEntry = archive.CreateEntryFromFile(file, relPath);
-                        }
+                        archive.CreateEntryFromFile(file, relativePath.Replace("\\", "/"));
                     }
-                    return zipToOpen.ToArray();
+                    catch
+                    {
+                        // Skip files we can't read
+                    }
                 }
             }
-            else
+
+            return tempFile;
+        }
+
+        /// <summary>
+        /// Zips only the specified files (by relative path) for incremental scanning.
+        /// Much faster than full zip for large codebases with few changes.
+        /// </summary>
+        private static string ZipSpecificFiles(string folderPath, List<string> relativePaths)
+        {
+            if (!Directory.Exists(folderPath) || relativePaths == null || relativePaths.Count == 0) return null;
+
+            var tempFile = Path.GetTempFileName();
+            File.Delete(tempFile);
+            tempFile = Path.ChangeExtension(tempFile, ".zip");
+
+            using (var zipStream = new FileStream(tempFile, FileMode.Create))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                return null;
+                foreach (var relativePath in relativePaths)
+                {
+                    var fullPath = Path.Combine(folderPath, relativePath);
+                    if (!File.Exists(fullPath)) continue;
+
+                    try
+                    {
+                        var fileInfo = new FileInfo(fullPath);
+                        if (fileInfo.Length > MaxFileSizeBytes) continue;
+
+                        archive.CreateEntryFromFile(fullPath, relativePath.Replace("\\", "/"));
+                    }
+                    catch
+                    {
+                        // Skip files we can't read
+                    }
+                }
             }
+
+            return tempFile;
+        }
+
+        // Legacy in-memory version kept for backward compat
+        private static byte[] ZipFolders(string folderPath)
+        {
+            var tempFile = ZipFolderToFile(folderPath);
+            if (tempFile == null) return null;
+            try { return File.ReadAllBytes(tempFile); }
+            finally { try { File.Delete(tempFile); } catch { } }
         }
 
         public static string GetSolutionFolderPath(string solutionFilePath)
         {
+            if (string.IsNullOrEmpty(solutionFilePath)) return "";
+
+            // If it's a directory (Folder View mode), return it directly
+            if (Directory.Exists(solutionFilePath))
+                return solutionFilePath.TrimEnd('\\', '/') + "\\";
+
+            // If it's a file (.sln), return its parent directory
+            if (File.Exists(solutionFilePath))
+                return Path.GetDirectoryName(solutionFilePath) + "\\";
+
+            // Fallback: strip the last path component
             return solutionFilePath.Replace(solutionFilePath.Split('\\').Last(), "");
         }
 
@@ -348,42 +737,464 @@ namespace Offensive360.VSExt.Helpers
                     throw new ArgumentException("Please setup correct base url under Offensive 360 settings");
                 }
 
-                var isAuthorized = await VerifySastAuthorizationAsync($"{Settings.Default.BaseUrl.TrimEnd('/')}{queuePosEndpoint}");
-                if (!isAuthorized)
-                {
-                    throw new UnauthorizedAccessException("Unable to authorize SAST API with provided access token");
-                }
+                // Skip validation — go straight to scan. The upload itself will fail fast if server is unreachable.
+                // Previous curl-based validation was intermittently deadlocking in the VS process context.
+                System.Diagnostics.Debug.WriteLine("Offensive360: Skipping pre-validation, will validate during upload");
             }
         }
 
-        private static async Task WaitAndShowQueuePositionAsync(
-            this ErrorListProvider _errorListProvider,
-            IVsStatusbar statusBar,
-            string projectName,
-            string scanMessagePrefix)
+        /// <summary>
+        /// Validates server connectivity using curl to avoid .NET HttpClient SSL issues
+        /// with self-signed certificates and nginx SSL renegotiation on on-prem instances.
+        /// </summary>
+        private static async Task<AuthResult> VerifyServerViaCurlAsync(string baseUrl, string token)
+        {
+            try
+            {
+                var bashPath = @"C:\Program Files\Git\bin\bash.exe";
+                if (!File.Exists(bashPath))
+                    bashPath = @"C:\Program Files (x86)\Git\bin\bash.exe";
+                if (!File.Exists(bashPath))
+                {
+                    // Fall back to .NET HttpClient if no bash
+                    return await VerifySastAuthorizationAsync($"{baseUrl}{projectEndpoint}?page=1&pageSize=1");
+                }
+
+                // Use curl.exe directly (not via bash) — simpler and avoids shell quoting issues
+                var curlPath = @"C:\Program Files\Git\mingw64\bin\curl.exe";
+                if (!File.Exists(curlPath))
+                    curlPath = @"C:\Program Files (x86)\Git\mingw64\bin\curl.exe";
+                if (!File.Exists(curlPath))
+                {
+                    // Fall back to .NET HttpClient if no curl
+                    return await VerifySastAuthorizationAsync($"{baseUrl}{projectEndpoint}?page=1&pageSize=1");
+                }
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = curlPath,
+                    Arguments = $"-sk --connect-timeout 10 --max-time 15 -o NUL -w \"%{{http_code}}\" -H \"Authorization: Bearer {token}\" \"{baseUrl}/app/api/HealthCheck\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = false  // Don't redirect stderr — prevents deadlock
+                };
+
+                try
+                {
+                    string curlOutput = "";
+                    using (var process = Process.Start(psi))
+                    {
+                        // Read stdout asynchronously to avoid deadlocks
+                        var stdoutBuilder = new System.Text.StringBuilder();
+                        process.OutputDataReceived += (s, args) => { if (args.Data != null) stdoutBuilder.Append(args.Data); };
+                        process.BeginOutputReadLine();
+                        var exited = await Task.Run(() => process.WaitForExit(20000));
+                        curlOutput = stdoutBuilder.ToString();
+                        if (!exited)
+                        {
+                            try { process.Kill(); } catch { }
+                            return new AuthResult { IsAuthorized = false, StatusCode = null, IsNetworkError = true };
+                        }
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: curl health check output: '{curlOutput.Trim()}'");
+                    string codeStr = curlOutput.Trim();
+                    int.TryParse(codeStr, out int httpCode);
+
+                    if (httpCode == 0)
+                        return new AuthResult { IsAuthorized = false, StatusCode = null, IsNetworkError = true };
+
+                    // HealthCheck returns 401 when running (no auth needed to confirm server is alive)
+                    // 401 = server is running and reachable, just not authorized for this endpoint
+                    // 200 = server is running
+                    // 403 = server is running, token has limited access
+                    return new AuthResult
+                    {
+                        IsAuthorized = httpCode == 200 || httpCode == 401 || httpCode == 403,
+                        StatusCode = httpCode,
+                        IsNetworkError = false
+                    };
+                }
+                finally
+                {
+                    // No temp files to clean up — using direct curl output
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Offensive360: VerifyServerViaCurlAsync failed — {ex.GetType().Name}: {ex.Message}");
+                return new AuthResult { IsAuthorized = false, StatusCode = null, IsNetworkError = true };
+            }
+        }
+
+        private class SastHttpException : Exception
+        {
+            public HttpStatusCode StatusCode { get; }
+            public SastHttpException(HttpStatusCode code, string message) : base(message) { StatusCode = code; }
+        }
+
+        private static async Task<string> PostAsStringAsync(string sastEndpoint, HttpContent formData)
+        {
+            using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
+            {
+                client.Timeout = TimeSpan.FromMinutes(60);
+
+                var req = new HttpRequestMessage
+                {
+                    RequestUri = new Uri(sastEndpoint),
+                    Method = HttpMethod.Post,
+                    Content = formData
+                };
+
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+
+                var response = await client.SendAsync(req);
+                if (!response.IsSuccessStatusCode)
+                {
+                    throw new SastHttpException(response.StatusCode, $"Server returned {(int)response.StatusCode}");
+                }
+
+                return await response.Content.ReadAsStringAsync();
+            }
+        }
+
+        /// <summary>
+        /// Posts a multipart scan upload. Tries curl first, falls back to Python (OpenSSL)
+        /// when curl fails due to Schannel SSL incompatibility with nginx renegotiation.
+        /// </summary>
+        private static async Task<(int httpCode, string body)> PostScanViaCurl(string endpoint, string token, string zipFilePath, string projectName)
+        {
+            // Try curl first
+            var curlResult = await PostScanViaCurlInternal(endpoint, token, zipFilePath, projectName);
+            if (curlResult.httpCode != 0 && curlResult.httpCode != 502)
+                return curlResult;
+
+            // curl returned 0 (SSL hang) or 502 (bad gateway) — try Python with OpenSSL
+            var pythonResult = await PostScanViaPython(endpoint, token, zipFilePath, projectName);
+            if (pythonResult.httpCode != 0)
+                return pythonResult;
+
+            // Both failed — return the curl result (will show appropriate error)
+            return curlResult.httpCode != 0 ? curlResult : pythonResult;
+        }
+
+        /// <summary>
+        /// Uploads via Python requests (uses OpenSSL, not Schannel).
+        /// Handles servers where curl/Schannel fails on SSL renegotiation during multipart POST.
+        /// </summary>
+        private static async Task<(int httpCode, string body)> PostScanViaPython(string endpoint, string token, string zipFilePath, string projectName)
+        {
+            var pythonPath = @"C:\Program Files\Python312\python.exe";
+            if (!File.Exists(pythonPath))
+            {
+                // Try common Python paths
+                foreach (var p in new[] { @"C:\Python312\python.exe", @"C:\Python311\python.exe", @"C:\Python310\python.exe" })
+                    if (File.Exists(p)) { pythonPath = p; break; }
+            }
+            if (!File.Exists(pythonPath))
+            {
+                // Try PATH
+                pythonPath = "python";
+            }
+
+            var outputFile = Path.GetTempFileName();
+            var statusFile = Path.GetTempFileName();
+            var scriptFile = Path.GetTempFileName() + ".py";
+
+            var scriptContent = $@"
+import sys, json
+try:
+    import requests, urllib3
+    urllib3.disable_warnings()
+    resp = requests.post(
+        '{endpoint}',
+        headers={{'Authorization': 'Bearer {token}'}},
+        files={{'fileSource': ('{projectName}.zip', open(r'{zipFilePath}', 'rb'), 'application/zip')}},
+        data={{'name': '{projectName}', 'externalScanSourceType': 'VsExtension', 'keepInvisibleAndDeletePostScan': 'True', 'allowDependencyScan': 'True', 'allowLicenseScan': 'False', 'allowMalwareScan': 'False'}},
+        verify=False, timeout=900
+    )
+    with open(r'{outputFile}', 'w') as f: f.write(resp.text)
+    with open(r'{statusFile}', 'w') as f: f.write(str(resp.status_code))
+except Exception as e:
+    with open(r'{statusFile}', 'w') as f: f.write('0')
+    with open(r'{outputFile}', 'w') as f: f.write(str(e))
+";
+            File.WriteAllText(scriptFile, scriptContent);
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = pythonPath,
+                    Arguments = $"\"{scriptFile}\"",
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using (var process = Process.Start(psi))
+                {
+                    var exited = await Task.Run(() => process.WaitForExit(960000));
+                    if (!exited)
+                    {
+                        try { process.Kill(); } catch { }
+                        return (0, "Python upload timed out");
+                    }
+                }
+
+                string body = File.Exists(outputFile) ? File.ReadAllText(outputFile) : "";
+                string codeStr = File.Exists(statusFile) ? File.ReadAllText(statusFile).Trim() : "0";
+                int.TryParse(codeStr, out int httpCode);
+                return (httpCode, body);
+            }
+            catch
+            {
+                return (0, "Python not available");
+            }
+            finally
+            {
+                try { File.Delete(outputFile); } catch { }
+                try { File.Delete(statusFile); } catch { }
+                try { File.Delete(scriptFile); } catch { }
+            }
+        }
+
+        private static async Task<(int httpCode, string body)> PostScanViaCurlInternal(string endpoint, string token, string zipFilePath, string projectName)
+        {
+            // Use Git's curl directly (better SSL compatibility than system curl)
+            var curlPath = @"C:\Program Files\Git\mingw64\bin\curl.exe";
+            if (!File.Exists(curlPath))
+                curlPath = @"C:\Program Files (x86)\Git\mingw64\bin\curl.exe";
+            if (!File.Exists(curlPath))
+                curlPath = "curl";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = curlPath,
+                Arguments = $"-sk --connect-timeout 30 --max-time 900 " +
+                    $"-w \"|||HTTP_CODE:%{{http_code}}\" " +
+                    $"-F \"fileSource=@{zipFilePath};type=application/zip\" " +
+                    $"-F \"name={projectName}\" " +
+                    $"-F \"externalScanSourceType=VsExtension\" " +
+                    $"-F \"keepInvisibleAndDeletePostScan=True\" " +
+                    $"-F \"allowDependencyScan=True\" " +
+                    $"-F \"allowLicenseScan=False\" " +
+                    $"-F \"allowMalwareScan=False\" " +
+                    $"-H \"Authorization: Bearer {token}\" " +
+                    $"\"{endpoint}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = false  // Don't redirect stderr — prevents deadlock with large responses
+            };
+
+            System.Diagnostics.Debug.WriteLine($"Offensive360: curl upload → {endpoint}");
+
+            using (var process = Process.Start(psi))
+            {
+                // Read stdout asynchronously to avoid deadlocks
+                var stdoutBuilder = new System.Text.StringBuilder();
+                process.OutputDataReceived += (s, args) => { if (args.Data != null) stdoutBuilder.Append(args.Data); };
+                process.BeginOutputReadLine();
+
+                var exited = await Task.Run(() => process.WaitForExit(960000));
+                if (!exited)
+                {
+                    try { process.Kill(); } catch { }
+                    throw new TimeoutException("Scan upload timed out after 16 minutes. For very large codebases, consider scanning individual folders.");
+                }
+
+                var output = stdoutBuilder.ToString();
+
+                // Parse response — HTTP code is after |||HTTP_CODE: marker
+                var marker = "|||HTTP_CODE:";
+                var markerIdx = output.LastIndexOf(marker);
+                int httpCode = 0;
+                string body = output;
+                if (markerIdx >= 0)
+                {
+                    int.TryParse(output.Substring(markerIdx + marker.Length).Trim(), out httpCode);
+                    body = output.Substring(0, markerIdx);
+                }
+
+                System.Diagnostics.Debug.WriteLine($"Offensive360: curl result — HTTP {httpCode}, body length {body.Length}");
+                return (httpCode, body);
+            }
+        }
+
+        /// <summary>
+        /// Polls until scan completes, then immediately fetches results before
+        /// the server deletes the ephemeral project (KeepInvisibleAndDeletePostScan).
+        /// </summary>
+        private static async Task<ScanResponse> WaitForScanAndFetchResultsAsync(IVsStatusbar statusBar, string projectId, string scanMessagePrefix)
         {
             var pollPeriod = TimeSpan.FromSeconds(10);
             var maxWaitTime = TimeSpan.FromMinutes(60);
             var stopWatch = new Stopwatch();
             stopWatch.Start();
+            var firstPoll = true;
 
             do
             {
-                await Task.Delay(pollPeriod);
+                // Short initial delay (3s), then standard interval — avoids missing fast scans
+                await Task.Delay(firstPoll ? TimeSpan.FromSeconds(3) : pollPeriod);
+                firstPoll = false;
 
-                var queuePosition = await GetAsync<int>($"{Settings.Default.BaseUrl.TrimEnd('/')}{queuePosEndpoint}?projectName={projectName}");
-                if (queuePosition <= 0)
+                var statusUrl = $"{Settings.Default.BaseUrl.TrimEnd('/')}{projectEndpoint}/{projectId}";
+
+                using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
                 {
+                    var req = new HttpRequestMessage
+                    {
+                        RequestUri = new Uri(statusUrl),
+                        Method = HttpMethod.Get
+                    };
+                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
 
-                    stopWatch.Stop();
-                    return;
+                    var response = await client.SendAsync(req);
+
+                    if (response.StatusCode == HttpStatusCode.NotFound)
+                    {
+                        stopWatch.Stop();
+                        throw new Exception("Project not found (404). The scan may have been deleted by the server.");
+                    }
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var body = await response.Content.ReadAsStringAsync();
+                        var project = Newtonsoft.Json.Linq.JObject.Parse(body);
+                        var status = project.Value<int>("status");
+
+                        switch (status)
+                        {
+                            case 2: // Succeeded
+                            case 4: // Partial Failed
+                                stopWatch.Stop();
+                                await statusBar.ShowProgressAsync($"{scanMessagePrefix} — retrieving results");
+                                // Fetch results IMMEDIATELY before server deletes the ephemeral project
+                                return await GetScanResultsAsync(projectId);
+                            case 3: // Failed
+                                throw new Exception("Scan failed on server");
+                            case 5: // Skipped
+                                throw new Exception("Scan was skipped by server");
+                            default: // 0=Queued, 1=InProgress
+                                var statusText = status == 0 ? "queued" : status == 1 ? "in progress" : $"status {status}";
+                                await statusBar.ShowProgressAsync($"{scanMessagePrefix} is {statusText}");
+                                break;
+                        }
+                    }
                 }
-                await statusBar.ShowProgressAsync($"{scanMessagePrefix} is yet to start and your queue position is {queuePosition}");
             }
             while (stopWatch.Elapsed < maxWaitTime);
 
             stopWatch.Stop();
-            throw new TimeoutException($"Operation '{nameof(WaitAndShowQueuePositionAsync)}' timed out after exceeding limit of {maxWaitTime}");
+            throw new TimeoutException($"Scan timed out after {maxWaitTime.TotalMinutes} minutes");
+        }
+
+        /// <summary>
+        /// Deletes a project from the server to avoid leaving scan artifacts visible in the dashboard.
+        /// </summary>
+        private static async Task DeleteProjectAsync(string projectId)
+        {
+            try
+            {
+                var url = $"{Settings.Default.BaseUrl.TrimEnd('/')}{projectEndpoint}/{projectId}";
+                using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
+                {
+                    var req = new HttpRequestMessage
+                    {
+                        RequestUri = new Uri(url),
+                        Method = HttpMethod.Delete
+                    };
+                    req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+                    await client.SendAsync(req);
+                }
+            }
+            catch { /* best-effort cleanup */ }
+        }
+
+        private static readonly string[] riskLevelNames = { "SAFE", "LOW", "MEDIUM", "HIGH", "CRITICAL" };
+
+        private static async Task<ScanResponse> GetScanResultsAsync(string projectId)
+        {
+            // Wait for server to populate results — poll project for vulnerabilitiesCount > 0
+            for (int attempt = 0; attempt < 12; attempt++)
+            {
+                try
+                {
+                    var checkUrl = $"{Settings.Default.BaseUrl.TrimEnd('/')}{projectEndpoint}/{projectId}";
+                    using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
+                    {
+                        var req = new HttpRequestMessage { RequestUri = new Uri(checkUrl), Method = HttpMethod.Get };
+                        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+                        var resp = await client.SendAsync(req);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            var body = await resp.Content.ReadAsStringAsync();
+                            var project = Newtonsoft.Json.Linq.JObject.Parse(body);
+                            var vulnCount = project.Value<int>("vulnerabilitiesCount");
+                            if (vulnCount > 0) break;
+                        }
+                    }
+                }
+                catch { break; }
+                await Task.Delay(5000);
+            }
+
+            // Fetch results
+            var results = await FetchLangResultsAsync(projectId);
+            if (results.Vulnerabilities != null && results.Vulnerabilities.Any())
+                return results;
+
+            // One more try after 10s
+            await Task.Delay(10000);
+            return await FetchLangResultsAsync(projectId);
+        }
+
+        private static async Task<ScanResponse> FetchLangResultsAsync(string projectId)
+        {
+            var resultsUrl = $"{Settings.Default.BaseUrl.TrimEnd('/')}{projectEndpoint}/{projectId}/LangaugeScanResult";
+
+            using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
+            {
+                var req = new HttpRequestMessage
+                {
+                    RequestUri = new Uri(resultsUrl),
+                    Method = HttpMethod.Get
+                };
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+
+                var response = await client.SendAsync(req);
+                response.EnsureSuccessStatusCode();
+
+                var body = await response.Content.ReadAsStringAsync();
+                var items = Newtonsoft.Json.Linq.JToken.Parse(body);
+
+                // The response may be an array directly or an object with pageItems
+                var array = items is Newtonsoft.Json.Linq.JArray
+                    ? (Newtonsoft.Json.Linq.JArray)items
+                    : items["pageItems"] as Newtonsoft.Json.Linq.JArray ?? new Newtonsoft.Json.Linq.JArray();
+
+                var vulnerabilities = array.Select(item => new VulnerabilityResponse
+                {
+                    Title = item.Value<string>("type") ?? "",
+                    LineNumber = $"{item.Value<int>("lineNo")},{item.Value<int>("columnNo")}",
+                    RiskLevel = MapRiskLevel(item.Value<int>("riskLevel")),
+                    Vulnerability = item.Value<string>("vulnerability") ?? "",
+                    FileName = item.Value<string>("fileName") ?? "",
+                    FilePath = item.Value<string>("filePath") ?? "",
+                    References = item.Value<string>("references") ?? ""
+                }).ToList();
+
+                return new ScanResponse { Vulnerabilities = vulnerabilities };
+            }
+        }
+
+        private static string MapRiskLevel(int level)
+        {
+            if (level >= 0 && level < riskLevelNames.Length)
+                return riskLevelNames[level];
+            return "MEDIUM";
         }
     }
 }

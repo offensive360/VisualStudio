@@ -51,7 +51,9 @@
     <Compile Include="Commands\SuppressCommand.cs" />
     <Compile Include="Commands\GetHelpCommand.cs" />
     <Compile Include="Commands\ClearAllErrorCommand.cs" />
+    <Compile Include="Helpers\ScanCache.cs" />
     <Compile Include="Helpers\SastHelper.cs" />
+    <Compile Include="Helpers\VulnerabilityKnowledgeBase.cs" />
     <Compile Include="Models\ScanReponse.cs" />
     <Compile Include="Models\VulnerabilityResponse.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
@@ -68,6 +70,9 @@
     </Compile>
     <Compile Include="SettingDialogControl.xaml.cs">
       <DependentUpon>SettingDialogControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="FixGuidanceDialog.xaml.cs">
+      <DependentUpon>FixGuidanceDialog.xaml</DependentUpon>
     </Compile>
     <Compile Include="Settings.cs" />
   </ItemGroup>
@@ -119,6 +124,10 @@
   </ItemGroup>
   <ItemGroup>
     <Page Include="SettingDialogControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+    <Page Include="FixGuidanceDialog.xaml">
       <SubType>Designer</SubType>
       <Generator>MSBuild:Compile</Generator>
     </Page>

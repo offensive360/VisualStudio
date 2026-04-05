@@ -3,10 +3,10 @@
   <Profiles />
   <Settings>
     <Setting Name="BaseUrl" Type="System.String" Scope="User">
-      <Value Profile="(Default)">&lt;Replace with SAST API base url&gt;</Value>
+      <Value Profile="(Default)"></Value>
     </Setting>
     <Setting Name="AccessToken" Type="System.String" Scope="User">
-      <Value Profile="(Default)">&lt;Replace with SAST API access token starting with ey..&gt;</Value>
+      <Value Profile="(Default)"></Value>
     </Setting>
   </Settings>
 </SettingsFile>

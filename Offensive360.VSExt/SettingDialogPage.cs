@@ -42,8 +42,6 @@ namespace Offensive360.VSExt
             if (!File.ReadLines(doNotDeleteFilePath).Any())
             {
                 File.WriteAllText(doNotDeleteFilePath, DateTime.Now.ToString());
-                Settings.Default.BaseUrl = "<Replace with SAST API base url>";
-                Settings.Default.AccessToken = "<Replace with SAST API access token starting with ey..>";
 
                 var dte = (DTE)(ServiceProvider.GetGlobalServiceAsync(typeof(SDTE))).Result;
 

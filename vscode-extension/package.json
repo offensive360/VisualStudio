@@ -1,0 +1,141 @@
+{
+  "name": "offensive360",
+  "displayName": "Offensive360 SAST",
+  "description": "Static Application Security Testing (SAST) — scan your code for vulnerabilities directly from VS Code. Supports C#, Java, JavaScript/TypeScript, Python, PHP, Ruby, Go, Kotlin, Swift, Dart, C/C++, and more.",
+  "version": "1.0.4",
+  "homepage": "https://offensive360.com",
+  "publisher": "Offensive360",
+  "icon": "resources/logo.png",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Linters",
+    "Testing",
+    "Other"
+  ],
+  "keywords": [
+    "security",
+    "sast",
+    "vulnerability",
+    "scanner",
+    "offensive360",
+    "static analysis",
+    "code security",
+    "dependency check",
+    "malware detection"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "offensive360.configure",
+        "title": "Offensive360: Configure Settings"
+      },
+      {
+        "command": "offensive360.scan",
+        "title": "Offensive360: Scan Current Workspace",
+        "icon": "$(shield)"
+      },
+      {
+        "command": "offensive360.scanFolder",
+        "title": "Offensive360: Scan Folder..."
+      },
+      {
+        "command": "offensive360.scanFile",
+        "title": "Offensive360: Scan File"
+      },
+      {
+        "command": "offensive360.scanGitRepo",
+        "title": "Offensive360: Scan Git Repository"
+      },
+      {
+        "command": "offensive360.viewResults",
+        "title": "Offensive360: View Scan Results"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "offensive360",
+          "title": "Offensive360 SAST",
+          "icon": "resources/logo.svg"
+        }
+      ]
+    },
+    "views": {
+      "offensive360": [
+        {
+          "id": "offensive360.results",
+          "name": "Scan Results"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Offensive360 SAST",
+      "properties": {
+        "o360.endpoint": {
+          "type": "string",
+          "default": "https://sast.offensive360.com",
+          "description": "Your O360 SAST server URL (e.g., https://your-server.com:1800)"
+        },
+        "o360.accessToken": {
+          "type": "string",
+          "default": "",
+          "description": "API access token generated from O360 dashboard → Settings → Tokens"
+        },
+        "o360.allowSelfSignedCerts": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow self-signed SSL certificates (for on-premise O360 instances)"
+        }
+      }
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "offensive360.scan",
+          "when": "view == offensive360.results",
+          "group": "navigation"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "offensive360.scanFile",
+          "when": "!explorerResourceIsFolder",
+          "group": "Offensive360"
+        },
+        {
+          "command": "offensive360.scanFolder",
+          "when": "explorerResourceIsFolder",
+          "group": "Offensive360"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "dependencies": {
+    "archiver": "^6.0.1",
+    "axios": "^1.6.7",
+    "form-data": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.2",
+    "@types/node": "^18.19.0",
+    "@types/vscode": "^1.74.0",
+    "typescript": "^5.3.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/offensive360/VSCode"
+  },
+  "bugs": {
+    "url": "https://github.com/offensive360/VSCode/issues"
+  },
+  "license": "MIT"
+}

@@ -65,7 +65,7 @@
       <Button guid="guidPackageCmdSet" id="GetHelpCommandId" priority="0x0200" type="Button">
         <Parent guid="guidPackageCmdSet" id="ErrorListGroup"/>
         <Strings>
-          <ButtonText>Offensive 360 : Get Help</ButtonText>
+          <ButtonText>Offensive 360 : View Fix</ButtonText>
         </Strings>
       </Button>
       <Button guid="guidPackageCmdSet" id="ClearAllErrorsCommandId" priority="0x0300" type="Button">

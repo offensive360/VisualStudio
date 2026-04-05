@@ -25,7 +25,7 @@ namespace Offensive360.VSExt.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("<Replace with SAST API base url>")]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
         public string BaseUrl {
             get {
                 return ((string)(this["BaseUrl"]));
@@ -37,7 +37,7 @@ namespace Offensive360.VSExt.Properties {
         
         [global::System.Configuration.UserScopedSettingAttribute()]
         [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
-        [global::System.Configuration.DefaultSettingValueAttribute("<Replace with SAST API access token starting with ey..>")]
+        [global::System.Configuration.DefaultSettingValueAttribute("")]
         public string AccessToken {
             get {
                 return ((string)(this["AccessToken"]));

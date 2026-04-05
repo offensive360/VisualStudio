@@ -53,7 +53,21 @@ namespace Offensive360.VSExt
             var dte = await package.GetServiceAsync(typeof(SDTE)) as DTE2;
             var errorList = dte.ToolWindows.ErrorList as IErrorList;
             var taskItem = (TaskListItem)errorList.TableControl.SelectedEntry.Identity;
-            var vulnerabilityTitle = taskItem.Text.Substring(taskItem.Text.IndexOf("["), taskItem.Text.IndexOf("]")).Trim('[').Trim(']');
+            var vulnerabilityTitle = "";
+            var openBracket = taskItem.Text.IndexOf('[');
+            var closeBracket = taskItem.Text.IndexOf(']');
+            if (openBracket >= 0 && closeBracket > openBracket)
+            {
+                vulnerabilityTitle = taskItem.Text.Substring(openBracket + 1, closeBracket - openBracket - 1);
+            }
+
+            var result = System.Windows.MessageBox.Show(
+                $"Suppress this vulnerability?\n\nFile: {taskItem.Document}\nLine: {taskItem.Line + 1}\nType: {vulnerabilityTitle}\n\nIt will be ignored in future scans.\nEdit .SASTO360\\sastIgnore to undo.",
+                "Offensive360 — Confirm Suppression",
+                System.Windows.MessageBoxButton.YesNo,
+                System.Windows.MessageBoxImage.Question);
+            if (result != System.Windows.MessageBoxResult.Yes) return;
+
             var vulnerabilityConfig = SastHelper.VulnerabilityIgnoreConfig(taskItem.Document?.ToLower(), taskItem.Line + 1, taskItem.Column, vulnerabilityTitle);
             await AppendToIgnoreFileAsync(vulnerabilityConfig, dte.DTE.Solution.FullName);
 
@@ -68,11 +82,11 @@ namespace Offensive360.VSExt
 
         private async Task AppendToIgnoreFileAsync(string strMessage, string solutionFilePath)
         {
-            var stream = new FileStream(SastHelper.IgnoreFilePath(solutionFilePath), FileMode.Append, FileAccess.Write);
-            var streamWriter = new StreamWriter((Stream)stream);
-            await streamWriter.WriteLineAsync(strMessage);
-            streamWriter.Close();
-            stream.Close();
+            using (var stream = new FileStream(SastHelper.IgnoreFilePath(solutionFilePath), FileMode.Append, FileAccess.Write))
+            using (var writer = new StreamWriter(stream))
+            {
+                await writer.WriteLineAsync(strMessage);
+            }
         }
     }
 }
