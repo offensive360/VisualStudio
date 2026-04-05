@@ -64,33 +64,31 @@ namespace Offensive360.VSExt
                     var vulnType = ExtractVulnType(selectedItemHelpLink, selectedItem.Text);
                     var kbEntry = VulnerabilityKnowledgeBase.Lookup(vulnType);
 
-                    if (kbEntry != null)
+                    // Always use FixGuidanceDialog — create fallback entry if not in KB
+                    if (kbEntry == null)
                     {
-                        // Show fix guidance inside the IDE
-                        System.Windows.MessageBox.Show(
-                            VulnerabilityKnowledgeBase.GetFullHelp(vulnType),
-                            $"Potential Fix — {kbEntry.Title}",
-                            System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Warning);
-                    }
-                    else
-                    {
-                        // No KB entry — show generic guidance with option to open reference
-                        var safeUrls = VulnerabilityKnowledgeBase.FilterReferences(selectedItemHelpLink);
-                        var urlHint = safeUrls.Count > 0 ? $"\n\nReference: {safeUrls[0]}" : "";
-                        var result = System.Windows.MessageBox.Show(
-                            $"No built-in fix guidance available for:\n\n  \"{vulnType}\"\n\n" +
-                            $"Check the Offensive360 dashboard for detailed analysis and remediation steps." +
-                            (safeUrls.Count > 0 ? "\n\nClick Yes to open the reference link in your browser, or No to close." : ""),
-                            "Potential Fix — " + vulnType,
-                            safeUrls.Count > 0 ? System.Windows.MessageBoxButton.YesNo : System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Information);
-
-                        if (result == System.Windows.MessageBoxResult.Yes && safeUrls.Count > 0)
+                        kbEntry = new VulnerabilityKnowledgeBase.VulnKBEntry
                         {
-                            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo { FileName = safeUrls[0], UseShellExecute = true }); } catch { }
-                        }
+                            VulnerabilityId = vulnType,
+                            Title = string.IsNullOrWhiteSpace(vulnType) ? "Security Vulnerability" : vulnType,
+                            ShortDescription = "No built-in description available. See References tab for more information.",
+                            RiskExplanation = "Review this finding carefully and consult the Offensive360 Knowledge Base.",
+                            HowToFix = "Please refer to the References tab and the Offensive360 Knowledge Base for remediation guidance.",
+                            References = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(vulnType ?? "")}/\nhttps://offensive360.com/academy/",
+                            CodePatternBad = "",
+                            CodePatternGood = "",
+                            CWEs = new string[0]
+                        };
                     }
+
+                    var dialog = new FixGuidanceDialog(
+                        kbEntry,
+                        selectedItem.Text,
+                        "",
+                        0,
+                        !string.IsNullOrWhiteSpace(selectedItemHelpLink) ? selectedItemHelpLink : kbEntry.References);
+                    dialog.ShowFixTab();
+                    dialog.ShowDialog();
                 }
                 catch { }
             }

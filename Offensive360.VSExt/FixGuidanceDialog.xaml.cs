@@ -156,12 +156,25 @@ namespace Offensive360.VSExt
                 }
             }
 
+            // KB references (from VulnerabilityInfo.json)
+            if (!string.IsNullOrWhiteSpace(entry.References))
+            {
+                var kbRefs = VulnerabilityKnowledgeBase.FilterReferences(entry.References);
+                foreach (var r in kbRefs)
+                    if (!urls.Contains(r)) urls.Add(r);
+            }
+
             // Server-provided references
             if (!string.IsNullOrWhiteSpace(references))
             {
                 var filtered = VulnerabilityKnowledgeBase.FilterReferences(references);
-                urls.AddRange(filtered);
+                foreach (var r in filtered)
+                    if (!urls.Contains(r)) urls.Add(r);
             }
+
+            // Always add O360 KB link
+            var o360Url = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(entry.VulnerabilityId ?? entry.Title ?? "")}/";
+            if (!urls.Contains(o360Url)) urls.Insert(0, o360Url);
 
             if (urls.Count == 0)
             {

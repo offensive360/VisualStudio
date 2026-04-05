@@ -401,47 +401,35 @@ namespace Offensive360.VSExt.Helpers
                 }
             }
 
-            // Try knowledge base first — open the rich dialog
-            var kbEntry = VulnerabilityKnowledgeBase.Lookup(vulnType);
-            if (kbEntry != null)
-            {
-                var dialog = new FixGuidanceDialog(
-                    kbEntry,
-                    errorTask.Text,
-                    errorTask.Document,
-                    errorTask.Line + 1,
-                    errorTask.HelpKeyword);
-                dialog.ShowFixTab();
-                dialog.ShowDialog();
-                return;
-            }
+            // Look up offline knowledge base
+            var kbEntry = VulnerabilityKnowledgeBase.Lookup(vulnType)
+                       ?? VulnerabilityKnowledgeBase.Lookup(errorTask.Text);
 
-            // Fallback: open filtered reference URLs with user confirmation
-            string helpLink = errorTask.HelpKeyword;
-            var urls = !string.IsNullOrWhiteSpace(helpLink)
-                ? VulnerabilityKnowledgeBase.FilterReferences(helpLink)
-                : new System.Collections.Generic.List<string>();
-
-            if (urls.Count > 0)
+            // Always use FixGuidanceDialog — create a fallback entry if KB doesn't have this vuln
+            if (kbEntry == null)
             {
-                var result = System.Windows.MessageBox.Show(
-                    $"No built-in fix guidance for \"{vulnType}\".\n\nWould you like to open the reference link?\n\n{urls[0]}",
-                    "Potential Fix — " + vulnType,
-                    System.Windows.MessageBoxButton.YesNo,
-                    System.Windows.MessageBoxImage.Information);
-                if (result == System.Windows.MessageBoxResult.Yes)
+                kbEntry = new VulnerabilityKnowledgeBase.VulnKBEntry
                 {
-                    try { Process.Start(new ProcessStartInfo { FileName = urls[0], UseShellExecute = true }); } catch { }
-                }
+                    VulnerabilityId = vulnType,
+                    Title = string.IsNullOrWhiteSpace(vulnType) ? "Security Vulnerability" : vulnType,
+                    ShortDescription = "No built-in description available for this vulnerability type.",
+                    RiskExplanation = "Review the References tab for more information on this finding.",
+                    HowToFix = "Please refer to the References tab and the Offensive360 Knowledge Base for remediation guidance.",
+                    References = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(vulnType ?? "")}/\nhttps://offensive360.com/academy/",
+                    CodePatternBad = "",
+                    CodePatternGood = "",
+                    CWEs = Array.Empty<string>()
+                };
             }
-            else
-            {
-                System.Windows.MessageBox.Show(
-                    $"No built-in fix guidance available for:\n\n  \"{vulnType}\"\n\nCheck the Offensive360 dashboard for detailed analysis.",
-                    "Potential Fix",
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Information);
-            }
+
+            var dialog = new FixGuidanceDialog(
+                kbEntry,
+                errorTask.Text,
+                errorTask.Document,
+                errorTask.Line + 1,
+                !string.IsNullOrWhiteSpace(errorTask.HelpKeyword) ? errorTask.HelpKeyword : kbEntry.References);
+            dialog.ShowFixTab();
+            dialog.ShowDialog();
         }
 
         private static void OnErrorTaskClick(object sender, EventArgs e)
