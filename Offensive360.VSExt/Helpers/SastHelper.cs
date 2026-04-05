@@ -144,10 +144,44 @@ namespace Offensive360.VSExt.Helpers
 
                 ScanResponse scanResponse = null;
 
-                // Use ExternalScan directly (same as VSCode plugin — most compatible path).
+                // Use scanProjectFile + polling (same as working VSCode v1.0.4 plugin).
+                // Falls back to ExternalScan only for External tokens that get 403.
                 try
                 {
                     await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Uploading ({(new FileInfo(zipPath).Length / 1024):N0} KB)...");
+                    var scanEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{scanFileEndpoint}";
+                    var (httpCode, projectIdStr) = await PostScanViaCurl(scanEndpoint, Settings.Default.AccessToken, zipPath, projectName);
+
+                    if (httpCode == 0)
+                    {
+                        throw new HttpRequestException("Cannot connect to the server. Check your endpoint URL and network connection.");
+                    }
+                    if (httpCode == 401)
+                    {
+                        throw new UnauthorizedAccessException(
+                            "Your access token is invalid or expired (HTTP 401).\n\n" +
+                            "Please ask your O360 administrator to generate a new token from:\n" +
+                            "Dashboard > Settings > Tokens\n\n" +
+                            "Then update it in Tools > Options > Offensive360.");
+                    }
+                    if (httpCode == 403)
+                    {
+                        // External token — fall back to ExternalScan
+                        throw new SastHttpException(HttpStatusCode.Forbidden, "Server returned 403");
+                    }
+                    if (httpCode < 200 || httpCode >= 300)
+                    {
+                        throw new HttpRequestException($"Server returned HTTP {httpCode}. Check your endpoint URL and access token.");
+                    }
+
+                    projectIdStr = projectIdStr?.Trim().Trim('"');
+                    scanResponse = await WaitForScanAndFetchResultsAsync(statusBar, projectIdStr, projectScanMessagePrefix);
+                    await DeleteProjectAsync(projectIdStr);
+                }
+                catch (SastHttpException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    // scanProjectFile returned 403 — External token, use ExternalScan as fallback
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Scanning (ExternalScan)...");
                     var extEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}";
                     var (extHttpCode, extBody) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, zipPath, projectName);
 
@@ -159,17 +193,13 @@ namespace Offensive360.VSExt.Helpers
                     {
                         throw new UnauthorizedAccessException(
                             "Your access token is invalid or expired (HTTP " + extHttpCode + ").\n\n" +
-                            "Please ask your O360 administrator to generate a new External token from:\n" +
+                            "Please ask your O360 administrator to generate a new token from:\n" +
                             "Dashboard > Settings > Tokens\n\n" +
                             "Then update it in Tools > Options > Offensive360.");
                     }
-                    if (extHttpCode == 429)
-                    {
-                        throw new HttpRequestException("Server is rate-limiting requests (HTTP 429). Please wait a minute and try again.");
-                    }
                     if (extHttpCode >= 500)
                     {
-                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}). The server may be overloaded — try again in a minute.\n\nServer response: {extBody}");
+                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}). The server may be overloaded — try again in a minute.");
                     }
                     if (extHttpCode < 200 || extHttpCode >= 300)
                     {
@@ -603,10 +633,9 @@ namespace Offensive360.VSExt.Helpers
             var streamContent = new StreamContent(fileStream);
             streamContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
 
-            formData.Add(streamContent, "\"fileSource\"", $"{projectName}.zip");
-            formData.Add(new StringContent(projectName), "\"name\"");
-            formData.Add(new StringContent("VsExtension"), "\"externalScanSourceType\"");
-            formData.Add(new StringContent("True"), "\"keepInvisibleAndDeletePostScan\"");
+            formData.Add(streamContent, "\"FileSource\"", $"{projectName}.zip");
+            formData.Add(new StringContent(projectName), "\"Name\"");
+            formData.Add(new StringContent("VsExtension"), "\"ExternalScanSourceType\"");
 
             return (formData, projectName);
         }
@@ -910,8 +939,8 @@ try:
     resp = requests.post(
         '{endpoint}',
         headers={{'Authorization': 'Bearer {token}'}},
-        files={{'fileSource': ('{projectName}.zip', open(r'{zipFilePath}', 'rb'), 'application/zip')}},
-        data={{'name': '{projectName}', 'externalScanSourceType': 'VsExtension', 'keepInvisibleAndDeletePostScan': 'True', 'allowDependencyScan': 'True', 'allowLicenseScan': 'False', 'allowMalwareScan': 'False'}},
+        files={{'FileSource': ('{projectName}.zip', open(r'{zipFilePath}', 'rb'), 'application/zip')}},
+        data={{'Name': '{projectName}', 'ExternalScanSourceType': 'VsExtension'}},
         verify=False, timeout=900
     )
     with open(r'{outputFile}', 'w') as f: f.write(resp.text)
@@ -973,13 +1002,9 @@ except Exception as e:
                 FileName = curlPath,
                 Arguments = $"-sk --connect-timeout 30 --max-time 900 " +
                     $"-w \"|||HTTP_CODE:%{{http_code}}\" " +
-                    $"-F \"fileSource=@{zipFilePath};type=application/zip\" " +
-                    $"-F \"name={projectName}\" " +
-                    $"-F \"externalScanSourceType=VsExtension\" " +
-                    $"-F \"keepInvisibleAndDeletePostScan=True\" " +
-                    $"-F \"allowDependencyScan=True\" " +
-                    $"-F \"allowLicenseScan=False\" " +
-                    $"-F \"allowMalwareScan=False\" " +
+                    $"-F \"FileSource=@{zipFilePath};type=application/zip\" " +
+                    $"-F \"Name={projectName}\" " +
+                    $"-F \"ExternalScanSourceType=VsExtension\" " +
                     $"-H \"Authorization: Bearer {token}\" " +
                     $"\"{endpoint}\"",
                 UseShellExecute = false,
