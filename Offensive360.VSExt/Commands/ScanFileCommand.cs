@@ -87,21 +87,50 @@ namespace Offensive360.VSExt
                     return;
                 }
 
-                // Scan the project containing this file (single file scans don't work
-                // reliably because the server needs project context for accurate analysis)
-                var projectDir = Path.GetDirectoryName(filePath);
+                // Scan the project containing this file
+                string scanPath = null;
 
-                // Walk up to find the project root (look for .csproj, .vbproj, or use parent of file)
+                // Try 1: Get project directory from the containing project
                 try
                 {
                     var activeProject = _dte?.DTE?.ActiveDocument?.ProjectItem?.ContainingProject;
                     if (activeProject != null && !string.IsNullOrEmpty(activeProject.FullName))
-                        projectDir = Path.GetDirectoryName(activeProject.FullName);
+                    {
+                        var projDir = Path.GetDirectoryName(activeProject.FullName);
+                        if (Path.IsPathRooted(projDir) && Directory.Exists(projDir))
+                            scanPath = projDir;
+                    }
                 }
                 catch { }
 
-                try { File.WriteAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Scan File (project): {projectDir} (file: {filePath})\n"); } catch { }
-                await _errorListProvider.ScanProjectAndShowVulnerabilitiesAsync(_statusBar, projectDir);
+                // Try 2: Use solution directory
+                if (string.IsNullOrEmpty(scanPath))
+                {
+                    try
+                    {
+                        var slnPath = _dte?.DTE?.Solution?.FullName;
+                        if (!string.IsNullOrEmpty(slnPath) && File.Exists(slnPath))
+                            scanPath = Path.GetDirectoryName(slnPath);
+                    }
+                    catch { }
+                }
+
+                // Try 3: Use file's own directory
+                if (string.IsNullOrEmpty(scanPath))
+                    scanPath = Path.GetDirectoryName(filePath);
+
+                if (string.IsNullOrEmpty(scanPath) || !Directory.Exists(scanPath))
+                {
+                    System.Windows.MessageBox.Show(
+                        "Could not determine project directory for this file.",
+                        "Offensive360 SAST",
+                        System.Windows.MessageBoxButton.OK,
+                        System.Windows.MessageBoxImage.Warning);
+                    return;
+                }
+
+                try { File.WriteAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Scan File -> scanning: {scanPath} (file: {filePath})\n"); } catch { }
+                await _errorListProvider.ScanProjectAndShowVulnerabilitiesAsync(_statusBar, scanPath);
             }
             catch (Exception ex)
             {
