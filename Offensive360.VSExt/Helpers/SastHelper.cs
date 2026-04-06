@@ -296,8 +296,8 @@ namespace Offensive360.VSExt.Helpers
 
                     var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
 
-                    // Deduplication key
-                    var dedupeKey = $"{vulnerability.FilePath?.ToLower()}|{lineNo}|{vulnerability.Title?.ToLower()}";
+                    // Deduplication by file+line (same location = same finding even if different title)
+                    var dedupeKey = $"{vulnerability.FilePath?.ToLower()}|{lineNo}";
                     if (!seen.Add(dedupeKey)) continue;
 
                     if (!ignoredVulnerabilities.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
@@ -524,14 +524,20 @@ namespace Offensive360.VSExt.Helpers
             if (File.Exists(document)) return document;
 
             // 2. Relative to solution folder
+            var normalized = document.Replace('/', '\\');
             if (!string.IsNullOrEmpty(solutionFolder))
             {
-                var candidate = Path.Combine(solutionFolder, document);
+                var candidate = Path.Combine(solutionFolder, normalized);
                 if (File.Exists(candidate)) return candidate;
 
-                // 3. Normalise separators (server may use / on Linux)
-                candidate = Path.Combine(solutionFolder, document.Replace('/', '\\'));
-                if (File.Exists(candidate)) return candidate;
+                // 3. Strip leading directories one by one (handles zip prefix like "reponame-hash/actual/path")
+                var parts = normalized.Split(new[] { '\\' }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 1; i < parts.Length; i++)
+                {
+                    var stripped = string.Join("\\", parts, i, parts.Length - i);
+                    candidate = Path.Combine(solutionFolder, stripped);
+                    if (File.Exists(candidate)) return candidate;
+                }
             }
 
             // 4. Search for filename recursively under solution folder (handles nested paths)

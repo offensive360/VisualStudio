@@ -46,9 +46,10 @@ namespace Offensive360.VSExt.Helpers
 
         public static readonly HashSet<string> ExcludeFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             ".vs", "cvs", ".svn", ".hg", ".git", ".bzr", "bin", "obj",
-            "backup", ".idea", ".vscode", "node_modules", "packages",
+            "backup", "backup1", "backup2", "backup3", "backups",
+            ".idea", ".vscode", "node_modules", "packages",
             "dist", "build", "out", "target", ".gradle", "__pycache__",
-            ".SASTO360"
+            ".SASTO360", "TestResults", "test-results", ".nuget"
         };
 
         public static string GetCachePath(string solutionFolder)
