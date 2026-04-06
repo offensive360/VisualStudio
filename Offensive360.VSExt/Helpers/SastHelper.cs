@@ -75,10 +75,22 @@ namespace Offensive360.VSExt.Helpers
 
                 // --- Incremental diff: compute on background thread to avoid UI freeze ---
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 1/5] Validating settings...");
-                var cached = ScanCache.Load(solutionFolder);
+                ScanCache.CachedScan cached = null;
+                try { cached = ScanCache.Load(solutionFolder); } catch { cached = null; }
 
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 2/5] Checking for changes...");
-                var diff = await ScanCache.ComputeIncrementalDiffAsync(solutionFolder, cached);
+                ScanCache.IncrementalDiff diff;
+                try
+                {
+                    diff = await ScanCache.ComputeIncrementalDiffAsync(solutionFolder, cached);
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Diff computed. HasChanges={diff.HasChanges} Changed={diff.ChangedRelativePaths.Count} Total={diff.CurrentHashes.Count}\n"); } catch {}
+                }
+                catch (Exception diffEx)
+                {
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ComputeIncrementalDiff FAILED: {diffEx.GetType().Name}: {diffEx.Message}\n"); } catch {}
+                    // Fall back to full scan if diff fails
+                    diff = new ScanCache.IncrementalDiff { HasChanges = true, ChangedRelativePaths = new System.Collections.Generic.List<string>(), DeletedRelativePaths = new System.Collections.Generic.List<string>(), CurrentHashes = new System.Collections.Generic.Dictionary<string, string>() };
+                }
 
                 if (!diff.HasChanges && cached != null)
                 {

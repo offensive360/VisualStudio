@@ -17,7 +17,7 @@ namespace Offensive360.VSExt
 
         /// <summary>
         /// Opens the dialog using the embedded offline knowledge base entry.
-        /// No AI, no network — works fully offline.
+        /// Falls back to internet (knowledge-base.offensive360.com) if offline KB is missing content.
         /// </summary>
         public FixGuidanceDialog(VulnerabilityKnowledgeBase.VulnKBEntry entry, string errorText, string filePath, int lineNumber, string references)
         {
@@ -34,6 +34,79 @@ namespace Offensive360.VSExt
             PopulateDetailsTab(entry, errorText);
             PopulateFixTab(entry);
             PopulateRefsTab(entry, references);
+
+            // If offline KB is missing description or fix, fetch from internet asynchronously
+            bool needsOnlineFetch = string.IsNullOrWhiteSpace(entry.ShortDescription) ||
+                                    string.IsNullOrWhiteSpace(entry.HowToFix);
+            if (needsOnlineFetch)
+            {
+                FetchOnlineKBAsync(entry.VulnerabilityId ?? entry.Title ?? "");
+            }
+        }
+
+        private async void FetchOnlineKBAsync(string vulnType)
+        {
+            if (string.IsNullOrWhiteSpace(vulnType)) return;
+            var slug = System.Text.RegularExpressions.Regex.Replace(vulnType.ToLowerInvariant(), @"[^a-z0-9]", "-").Trim('-');
+            var urls = new[]
+            {
+                $"https://knowledge-base.offensive360.com/api/vulnerabilities/{slug}",
+                $"https://knowledge-base.offensive360.com/{vulnType}/"
+            };
+
+            foreach (var url in urls)
+            {
+                try
+                {
+                    System.Net.Http.HttpResponseMessage response;
+                    string body;
+                    using (var client = new System.Net.Http.HttpClient { Timeout = System.TimeSpan.FromSeconds(5) })
+                    {
+                        client.DefaultRequestHeaders.Add("Accept", "application/json,text/html");
+                        response = await client.GetAsync(url);
+                        if (!response.IsSuccessStatusCode) continue;
+                        body = await response.Content.ReadAsStringAsync();
+                    }
+
+                    string description = null, impact = null, howToFix = null;
+
+                    // Try JSON
+                    try
+                    {
+                        var json = Newtonsoft.Json.Linq.JObject.Parse(body);
+                        description = json.Value<string>("description") ?? json.Value<string>("info");
+                        impact = json.Value<string>("impact") ?? json.Value<string>("effect");
+                        howToFix = json.Value<string>("recommendation") ?? json.Value<string>("howToFix");
+                    }
+                    catch
+                    {
+                        // HTML — extract first paragraph
+                        var m = System.Text.RegularExpressions.Regex.Match(body, @"<p[^>]*>(.*?)</p>",
+                            System.Text.RegularExpressions.RegexOptions.Singleline);
+                        if (m.Success)
+                            description = System.Text.RegularExpressions.Regex.Replace(m.Groups[1].Value, @"<[^>]+>", "").Trim();
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(description) || !string.IsNullOrWhiteSpace(howToFix))
+                    {
+                        // Update UI on dispatcher thread
+                        await System.Windows.Application.Current.Dispatcher.InvokeAsync(() =>
+                        {
+                            if (!string.IsNullOrWhiteSpace(description) &&
+                                (DescriptionText.Text.StartsWith("No built-in") || string.IsNullOrWhiteSpace(DescriptionText.Text)))
+                                DescriptionText.Text = description;
+                            if (!string.IsNullOrWhiteSpace(impact) &&
+                                (ImpactText.Text.StartsWith("Review") || string.IsNullOrWhiteSpace(ImpactText.Text)))
+                                ImpactText.Text = impact;
+                            if (!string.IsNullOrWhiteSpace(howToFix) &&
+                                (FixRecommendationText.Text.StartsWith("Please refer") || string.IsNullOrWhiteSpace(FixRecommendationText.Text)))
+                                FixRecommendationText.Text = howToFix;
+                        });
+                        break;
+                    }
+                }
+                catch { }
+            }
         }
 
         private void PopulateHeader(VulnerabilityKnowledgeBase.VulnKBEntry entry, string filePath, int lineNumber)
