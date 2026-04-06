@@ -403,12 +403,20 @@ namespace Offensive360.VSExt.Helpers
         {
             var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
 
+            // Resolve the file path: strip any zip prefix, find actual file on disk
+            var solutionFolder = GetSolutionFolderPath(currentFilePath);
+            var resolvedPath = ResolveFilePath(solutionFolder, vulnerability.FilePath);
+            // Store relative path for display (shorter in Error List)
+            var displayPath = resolvedPath != null && !string.IsNullOrEmpty(solutionFolder)
+                ? resolvedPath.Substring(solutionFolder.TrimEnd('\\').Length).TrimStart('\\')
+                : vulnerability.FilePath;
+
             var errorTask = new ErrorTask
             {
                 ErrorCategory = GetErrorCategory(vulnerability.RiskLevel),
                 Category = TaskCategory.CodeSense,
                 Text = $"[{vulnerability.Title}] {vulnerability.Vulnerability}" ,
-                Document = vulnerability.FilePath,
+                Document = displayPath,
                 Line = lineNo - 1,
                 Column = columnNo,
                 Priority = GetTaskPriority(vulnerability.RiskLevel),
