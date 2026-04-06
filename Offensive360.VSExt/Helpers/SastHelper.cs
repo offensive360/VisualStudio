@@ -260,30 +260,32 @@ namespace Offensive360.VSExt.Helpers
                     try { if (zipPath != null && File.Exists(zipPath)) File.Delete(zipPath); } catch { }
                 }
 
-                // --- Merge results: incremental scan merges with cached, full scan replaces ---
+                // Always use full scan results — incremental merging caused duplicate counts
+                // because server file paths don't reliably match local relative paths.
+                // Each scan returns the complete set for the uploaded files; no merging needed.
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 5/5] Processing results...");
-                List<VulnerabilityResponse> finalVulnerabilities;
-                if (isIncremental)
-                {
-                    finalVulnerabilities = ScanCache.MergeResults(
-                        cached,
-                        scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>(),
-                        diff.ChangedRelativePaths,
-                        diff.DeletedRelativePaths);
-                }
-                else
-                {
-                    finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
-                }
+                var finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
 
                 // Save merged results + current hashes to cache
                 ScanCache.Save(solutionFolder, finalVulnerabilities, diff.CurrentHashes);
 
                 var ignoredVulnerabilities = File.Exists(IgnoreFilePath(solutionFilePath)) ? File.ReadAllLines(IgnoreFilePath(solutionFilePath)) : new string[0];
 
+                // Deduplicate: same title+file+line may appear from merge or server
+                var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var vulnerability in finalVulnerabilities)
                 {
+                    // Skip results with no description AND no valid file path — these are
+                    // incomplete "AI engine" findings that the server returned without content
+                    bool hasDescription = !string.IsNullOrWhiteSpace(vulnerability.Vulnerability);
+                    bool hasFile = !string.IsNullOrWhiteSpace(vulnerability.FilePath);
+                    if (!hasDescription && !hasFile) continue;
+
                     var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
+
+                    // Deduplication key
+                    var dedupeKey = $"{vulnerability.FilePath?.ToLower()}|{lineNo}|{vulnerability.Title?.ToLower()}";
+                    if (!seen.Add(dedupeKey)) continue;
 
                     if (!ignoredVulnerabilities.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
                     {
@@ -469,29 +471,23 @@ namespace Offensive360.VSExt.Helpers
             try
             {
                 var errorTask = sender as ErrorTask;
-                if (errorTask == null) return;
+                if (errorTask == null || string.IsNullOrWhiteSpace(errorTask.Document)) return;
 
                 var solutionFolder = GetSolutionFolderPath(currentFilePath);
-                var filePath = System.IO.Path.Combine(solutionFolder, errorTask.Document);
+                var filePath = ResolveFilePath(solutionFolder, errorTask.Document);
 
-                if (!System.IO.File.Exists(filePath))
+                if (filePath == null)
                 {
-                    // Try the document path as-is (might be absolute)
-                    filePath = errorTask.Document;
-                }
-
-                if (!System.IO.File.Exists(filePath))
-                {
-                    System.Diagnostics.Debug.WriteLine($"Offensive360: File not found — {filePath}");
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: File not found — {errorTask.Document} (solution: {solutionFolder})");
                     return;
                 }
 
-                // Use ServiceProvider to get DTE from current VS instance (Marshal.GetActiveObject is unreliable in VS 2022)
+                // Use ServiceProvider to get DTE from current VS instance
                 var dte = (EnvDTE.DTE)Package.GetGlobalService(typeof(EnvDTE.DTE));
                 if (dte == null) return;
 
                 dte.MainWindow.Activate();
-                EnvDTE.Window w = dte.ItemOperations.OpenFile(filePath, EnvDTE.Constants.vsViewKindTextView);
+                dte.ItemOperations.OpenFile(filePath, EnvDTE.Constants.vsViewKindTextView);
                 if (dte.ActiveDocument?.Selection is EnvDTE.TextSelection selection)
                 {
                     selection.GotoLine(errorTask.Line + 1, true);
@@ -501,6 +497,48 @@ namespace Offensive360.VSExt.Helpers
             {
                 System.Diagnostics.Debug.WriteLine($"Offensive360: Navigation failed — {ex.Message}");
             }
+        }
+
+        /// <summary>
+        /// Resolve a file path from the server (relative or absolute) to an absolute path that exists.
+        /// Tries multiple strategies so navigation works regardless of how the server returns paths.
+        /// </summary>
+        private static string ResolveFilePath(string solutionFolder, string document)
+        {
+            if (string.IsNullOrWhiteSpace(document)) return null;
+
+            // 1. Absolute path as-is
+            if (File.Exists(document)) return document;
+
+            // 2. Relative to solution folder
+            if (!string.IsNullOrEmpty(solutionFolder))
+            {
+                var candidate = Path.Combine(solutionFolder, document);
+                if (File.Exists(candidate)) return candidate;
+
+                // 3. Normalise separators (server may use / on Linux)
+                candidate = Path.Combine(solutionFolder, document.Replace('/', '\\'));
+                if (File.Exists(candidate)) return candidate;
+            }
+
+            // 4. Search for filename recursively under solution folder (handles nested paths)
+            if (!string.IsNullOrEmpty(solutionFolder) && Directory.Exists(solutionFolder))
+            {
+                var fileName = Path.GetFileName(document);
+                try
+                {
+                    var matches = Directory.GetFiles(solutionFolder, fileName, SearchOption.AllDirectories);
+                    if (matches.Length == 1) return matches[0];
+                    // If multiple matches, prefer the one whose path contains the document's directory hint
+                    var dirHint = Path.GetDirectoryName(document)?.Replace('/', '\\') ?? "";
+                    foreach (var m in matches)
+                        if (m.IndexOf(dirHint, StringComparison.OrdinalIgnoreCase) >= 0) return m;
+                    if (matches.Length > 0) return matches[0];
+                }
+                catch { }
+            }
+
+            return null;
         }
 
         /// <summary>
