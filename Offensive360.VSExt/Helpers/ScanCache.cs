@@ -39,7 +39,9 @@ namespace Offensive360.VSExt.Helpers
             ".jar", ".rar", ".7z", ".gz", ".tar", ".war", ".ear",
             ".pdb", ".class", ".iml", ".nupkg", ".vsix", ".aar",
             ".woff", ".woff2", ".ttf", ".otf", ".eot",
-            ".db", ".sqlite", ".mdb", ".lock"
+            ".db", ".sqlite", ".mdb", ".lock",
+            ".sln", ".csproj", ".vbproj", ".vcxproj", ".fsproj", ".proj",
+            ".suo", ".user", ".cache", ".snk", ".pfx", ".p12"
         };
 
         public static readonly HashSet<string> ExcludeFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {

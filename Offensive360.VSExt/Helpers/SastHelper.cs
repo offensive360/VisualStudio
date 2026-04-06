@@ -92,9 +92,9 @@ namespace Offensive360.VSExt.Helpers
                     diff = new ScanCache.IncrementalDiff { HasChanges = true, ChangedRelativePaths = new System.Collections.Generic.List<string>(), DeletedRelativePaths = new System.Collections.Generic.List<string>(), CurrentHashes = new System.Collections.Generic.Dictionary<string, string>() };
                 }
 
-                if (!diff.HasChanges && cached != null)
+                if (!diff.HasChanges && cached != null && cached.Vulnerabilities != null && cached.Vulnerabilities.Count > 0)
                 {
-                    // No files changed — use cached results directly
+                    // No files changed AND cache has actual findings — use cached results
                     await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} — No changes detected, loading cached results...");
 
                     var ignoredCached = File.Exists(IgnoreFilePath(solutionFilePath)) ? File.ReadAllLines(IgnoreFilePath(solutionFilePath)) : new string[0];
@@ -163,7 +163,9 @@ namespace Offensive360.VSExt.Helpers
                 {
                     await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Uploading ({(new FileInfo(zipPath).Length / 1024):N0} KB)...");
                     var scanEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{scanFileEndpoint}";
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Calling scanProjectFile: {scanEndpoint}\n"); } catch {}
                     var (httpCode, projectIdStr) = await PostScanViaCurl(scanEndpoint, Settings.Default.AccessToken, zipPath, projectName);
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] scanProjectFile returned HTTP {httpCode}\n"); } catch {}
 
                     if (httpCode == 0)
                     {
@@ -181,6 +183,14 @@ namespace Offensive360.VSExt.Helpers
                     {
                         // External token — fall back to ExternalScan
                         throw new SastHttpException(HttpStatusCode.Forbidden, "Server returned 403");
+                    }
+                    if (httpCode == 413)
+                    {
+                        throw new HttpRequestException(
+                            $"Upload too large (HTTP 413). The server's nginx has a file size limit.\n\n" +
+                            $"Options:\n" +
+                            $"• Ask your O360 administrator to increase nginx 'client_max_body_size' on port 9091\n" +
+                            $"• Scan a smaller subset of files (individual folders instead of whole solution)");
                     }
                     if (httpCode < 200 || httpCode >= 300)
                     {
@@ -237,7 +247,10 @@ namespace Offensive360.VSExt.Helpers
                         throw new HttpRequestException($"Server returned HTTP {extHttpCode}. Check your endpoint URL and access token.");
                     }
 
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode}, body length={extBody?.Length ?? 0}\n"); } catch {}
                     scanResponse = JsonConvert.DeserializeObject<ScanResponse>(extBody);
+                    var vulnCount = scanResponse?.Vulnerabilities?.Count() ?? 0;
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Deserialized: {vulnCount} vulnerabilities\n"); } catch {}
                     if (scanResponse?.Vulnerabilities == null)
                     {
                         scanResponse = new ScanResponse { Vulnerabilities = new List<VulnerabilityResponse>() };
