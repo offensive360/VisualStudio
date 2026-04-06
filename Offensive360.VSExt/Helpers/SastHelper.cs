@@ -141,6 +141,7 @@ namespace Offensive360.VSExt.Helpers
                     zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
                 }
                 _tempZipPath = zipPath;
+                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Zip created: {zipPath} ({new FileInfo(zipPath).Length / 1024}KB)\n"); } catch {}
 
                 // Warn about large uploads
                 var zipSizeMb = new FileInfo(zipPath).Length / (1024 * 1024);
@@ -192,10 +193,28 @@ namespace Offensive360.VSExt.Helpers
                 }
                 catch (SastHttpException ex) when (ex.StatusCode == HttpStatusCode.Forbidden)
                 {
-                    // scanProjectFile returned 403 — External token, use ExternalScan as fallback
-                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Scanning (ExternalScan)...");
+                    // scanProjectFile returned 403 — External token, use ExternalScan with retry
                     var extEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}";
-                    var (extHttpCode, extBody) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, zipPath, projectName);
+                    string extBody = null;
+                    int extHttpCode = 0;
+                    const int maxRetries = 3;
+                    for (int attempt = 1; attempt <= maxRetries; attempt++)
+                    {
+                        if (attempt > 1)
+                        {
+                            await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Retrying scan (attempt {attempt}/{maxRetries})...");
+                            await Task.Delay(5000 * attempt);
+                        }
+                        else
+                        {
+                            await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Scanning (ExternalScan)...");
+                        }
+                        (extHttpCode, extBody) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, zipPath, projectName);
+                        if (extHttpCode >= 200 && extHttpCode < 300) break; // success
+                        if (extHttpCode == 0 || extHttpCode == 401 || extHttpCode == 403) break; // non-retryable
+                        // 500+ → retry
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode} on attempt {attempt}, retrying...\n"); } catch {}
+                    }
 
                     if (extHttpCode == 0)
                     {
@@ -211,7 +230,7 @@ namespace Offensive360.VSExt.Helpers
                     }
                     if (extHttpCode >= 500)
                     {
-                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}). The server may be overloaded — try again in a minute.");
+                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}) after {maxRetries} attempts. The server may be temporarily overloaded — please try again in a minute.");
                     }
                     if (extHttpCode < 200 || extHttpCode >= 300)
                     {
