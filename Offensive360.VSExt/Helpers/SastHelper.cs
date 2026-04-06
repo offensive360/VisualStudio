@@ -475,7 +475,7 @@ namespace Offensive360.VSExt.Helpers
                     ShortDescription = "No built-in description available for this vulnerability type.",
                     RiskExplanation = "Review the References tab for more information on this finding.",
                     HowToFix = "Please refer to the References tab and the Offensive360 Knowledge Base for remediation guidance.",
-                    References = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(vulnType ?? "")}/\nhttps://offensive360.com/academy/",
+                    References = "https://offensive360.com/academy/",
                     CodePatternBad = "",
                     CodePatternGood = "",
                     CWEs = Array.Empty<string>()

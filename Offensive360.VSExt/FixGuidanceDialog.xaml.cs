@@ -246,13 +246,8 @@ namespace Offensive360.VSExt
                     if (!urls.Contains(r)) urls.Add(r);
             }
 
-            // Add O360 KB link only if not already present from the KB references
-            bool hasKbLink = urls.Any(u => u.IndexOf("knowledge-base.offensive360.com", StringComparison.OrdinalIgnoreCase) >= 0);
-            if (!hasKbLink)
-            {
-                var o360Url = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(entry.VulnerabilityId ?? entry.Title ?? "")}/";
-                urls.Insert(0, o360Url);
-            }
+            // Only add O360 KB link if the KB entry has a real reference URL — never auto-generate from title/ID
+            // (auto-generated URLs like /Sensitive%20payment%20card%20.../ don't exist on the website)
 
             // Deduplicate URLs by domain+path (case-insensitive) to prevent duplicates
             var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
