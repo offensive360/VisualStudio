@@ -51,8 +51,7 @@ namespace Offensive360.VSExt
             var slug = System.Text.RegularExpressions.Regex.Replace(vulnType.ToLowerInvariant(), @"[^a-z0-9]", "-").Trim('-');
             var urls = new[]
             {
-                $"https://knowledge-base.offensive360.com/api/vulnerabilities/{slug}",
-                $"https://knowledge-base.offensive360.com/{vulnType}/"
+                $"https://knowledge-base.offensive360.com/api/vulnerabilities/{slug}"
             };
 
             foreach (var url in urls)

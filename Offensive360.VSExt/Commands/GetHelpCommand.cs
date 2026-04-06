@@ -74,7 +74,7 @@ namespace Offensive360.VSExt
                             ShortDescription = "No built-in description available. See References tab for more information.",
                             RiskExplanation = "Review this finding carefully and consult the Offensive360 Knowledge Base.",
                             HowToFix = "Please refer to the References tab and the Offensive360 Knowledge Base for remediation guidance.",
-                            References = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(vulnType ?? "")}/\nhttps://offensive360.com/academy/",
+                            References = "https://offensive360.com/academy/",
                             CodePatternBad = "",
                             CodePatternGood = "",
                             CWEs = new string[0]
