@@ -407,9 +407,15 @@ namespace Offensive360.VSExt.Helpers
             var solutionFolder = GetSolutionFolderPath(currentFilePath);
             var resolvedPath = ResolveFilePath(solutionFolder, vulnerability.FilePath);
             // Store relative path for display (shorter in Error List)
-            var displayPath = resolvedPath != null && !string.IsNullOrEmpty(solutionFolder)
-                ? resolvedPath.Substring(solutionFolder.TrimEnd('\\').Length).TrimStart('\\')
-                : vulnerability.FilePath;
+            string displayPath = vulnerability.FilePath;
+            if (resolvedPath != null && !string.IsNullOrEmpty(solutionFolder))
+            {
+                var trimmed = solutionFolder.TrimEnd('\\');
+                if (resolvedPath.StartsWith(trimmed, StringComparison.OrdinalIgnoreCase) && resolvedPath.Length > trimmed.Length)
+                    displayPath = resolvedPath.Substring(trimmed.Length).TrimStart('\\');
+                else
+                    displayPath = resolvedPath;
+            }
 
             var errorTask = new ErrorTask
             {

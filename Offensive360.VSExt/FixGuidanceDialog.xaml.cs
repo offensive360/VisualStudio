@@ -245,9 +245,17 @@ namespace Offensive360.VSExt
                     if (!urls.Contains(r)) urls.Add(r);
             }
 
-            // Always add O360 KB link
-            var o360Url = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(entry.VulnerabilityId ?? entry.Title ?? "")}/";
-            if (!urls.Contains(o360Url)) urls.Insert(0, o360Url);
+            // Add O360 KB link only if not already present from the KB references
+            bool hasKbLink = urls.Any(u => u.IndexOf("knowledge-base.offensive360.com", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (!hasKbLink)
+            {
+                var o360Url = $"https://knowledge-base.offensive360.com/{Uri.EscapeDataString(entry.VulnerabilityId ?? entry.Title ?? "")}/";
+                urls.Insert(0, o360Url);
+            }
+
+            // Deduplicate URLs by domain+path (case-insensitive) to prevent duplicates
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            urls = urls.Where(u => seenUrls.Add(u.TrimEnd('/'))).ToList();
 
             if (urls.Count == 0)
             {

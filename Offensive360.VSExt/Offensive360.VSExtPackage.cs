@@ -37,6 +37,8 @@ namespace Offensive360.VSExt
             _errorListProvider = new ErrorListProvider(new ServiceProvider((Microsoft.VisualStudio.OLE.Interop.IServiceProvider)_dte));
 
             await ScanProjectCommand.InitializeAsync(this, _errorListProvider);
+            await ScanSingleProjectCommand.InitializeAsync(this, _errorListProvider);
+            await ScanFileCommand.InitializeAsync(this, _errorListProvider);
 
             await ClearAllErrorCommand.InitializeAsync(this, _errorListProvider);
 

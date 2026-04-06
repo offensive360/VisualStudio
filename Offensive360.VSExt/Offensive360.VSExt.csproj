@@ -64,6 +64,8 @@
       <DependentUpon>Settings.settings</DependentUpon>
     </Compile>
     <Compile Include="Commands\ScanProjectCommand.cs" />
+    <Compile Include="Commands\ScanSingleProjectCommand.cs" />
+    <Compile Include="Commands\ScanFileCommand.cs" />
     <Compile Include="ProvideToolboxControlAttribute.cs" />
     <Compile Include="SettingDialogPage.cs">
       <SubType>Component</SubType>
