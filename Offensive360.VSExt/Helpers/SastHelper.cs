@@ -135,6 +135,12 @@ namespace Offensive360.VSExt.Helpers
                 if (isIncremental)
                 {
                     zipPath = await Task.Run(() => ZipSpecificFiles(solutionFolder, diff.ChangedRelativePaths));
+                    // If incremental zip is empty (changed files were all excluded), fall back to full scan
+                    if (zipPath == null || !File.Exists(zipPath) || new FileInfo(zipPath).Length < 100)
+                    {
+                        try { if (zipPath != null && File.Exists(zipPath)) File.Delete(zipPath); } catch { }
+                        zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
+                    }
                 }
                 else
                 {
