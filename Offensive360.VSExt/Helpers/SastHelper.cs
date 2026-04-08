@@ -305,6 +305,14 @@ namespace Offensive360.VSExt.Helpers
                 // Each scan returns the complete set for the uploaded files; no merging needed.
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 5/5] Processing results...");
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Processing results...\n"); } catch {}
+
+                // RECONCILIATION: wipe BOTH UIs (Error List + O360 tool window) before
+                // we start populating. Guarantees no stale rows from a prior scan can
+                // bleed through if this scan completes but the clear was missed (e.g.
+                // scan triggered twice rapidly, or a prior populate partially failed).
+                try { _errorListProvider.Tasks.Clear(); } catch { }
+                try { Offensive360.VSExt.ToolWindow.FindingsStore.Clear(); } catch { }
+
                 var finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] finalVulnerabilities.Count={finalVulnerabilities.Count}\n"); } catch {}
 
@@ -330,67 +338,92 @@ namespace Offensive360.VSExt.Helpers
                     ignoredVulnerabilities = new string[0];
                 }
 
-                // Render every finding the server returned — NO client-side dedup.
-                // The server is the source of truth for the dashboard count, and as of
-                // the 2026-04-08 IDECO backend update the response includes a
-                // totalVulnerabilities field whose value equals vulnerabilities.Count.
-                // Previous versions did file+line dedup which silently dropped real
-                // findings that legitimately shared a location (e.g. SAST + AI engine
-                // finding two different issues on the same line), causing 165/166
-                // count mismatches against the dashboard.
+                // Render every finding the server returned — NO client-side dedup,
+                // NO silent skipping. Hard guarantee: UI finding count == server
+                // response count. Any drift is a bug and must be caught by the
+                // reconciliation assertion below.
+                //
+                // History:
+                //  - v1.12.7 and earlier did file+line dedup (165/166 bug)
+                //  - v1.12.8 removed dedup (fix)
+                //  - v1.12.11 removes the "skip if no description AND no file" filter
+                //    too. If a finding has no content, we still render it as a
+                //    placeholder row so the displayed count is always exactly the
+                //    server's totalVulnerabilities.
                 var toolWindowRows = new List<Offensive360.VSExt.ToolWindow.FindingRow>();
+                int serverTotalForAssert = scanResponse?.TotalVulnerabilities ?? finalVulnerabilities.Count;
+                int suppressedByIgnore = 0;
                 try
                 {
                     int rendered = 0;
                     foreach (var vulnerability in finalVulnerabilities)
                     {
-                        // Drop only results with NO information at all — these are empty
-                        // placeholders the AI engine sometimes returns. Never drop real findings.
-                        bool hasDescription = !string.IsNullOrWhiteSpace(vulnerability.Vulnerability);
-                        bool hasFile = !string.IsNullOrWhiteSpace(vulnerability.FilePath);
-                        if (!hasDescription && !hasFile) continue;
-
                         var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
 
-                        if (!ignoredVulnerabilities.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
+                        // Suppression (the user's ignore list) is the ONLY reason we drop a
+                        // finding from display. All other findings are rendered unconditionally.
+                        if (ignoredVulnerabilities.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
                         {
-                            try { Log(_errorListProvider, vulnerability); rendered++; }
-                            catch (Exception logEx)
-                            {
-                                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Log finding skipped: {logEx.GetType().Name}: {logEx.Message}\n"); } catch {}
-                            }
+                            suppressedByIgnore++;
+                            continue;
+                        }
 
-                            // Also append to the dedicated Offensive 360 tool window (NEW in v1.12.9).
-                            // This is the "separate tab" UI — keeps findings from being visually mixed
-                            // with compiler warnings / IntelliSense noise in the generic Error List.
-                            try
+                        try { Log(_errorListProvider, vulnerability); rendered++; }
+                        catch (Exception logEx)
+                        {
+                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Log finding skipped: {logEx.GetType().Name}: {logEx.Message}\n"); } catch {}
+                        }
+
+                        // Also append to the dedicated Offensive 360 tool window.
+                        try
+                        {
+                            var absFile = ResolveAbsoluteFilePath(solutionFolder, vulnerability.FilePath, vulnerability.FileName);
+                            var description = vulnerability.Vulnerability ?? "(no description provided by server)";
+                            if (!string.IsNullOrWhiteSpace(vulnerability.Effect))
+                                description += "\n\nImpact: " + vulnerability.Effect;
+                            toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
                             {
-                                var absFile = ResolveAbsoluteFilePath(solutionFolder, vulnerability.FilePath, vulnerability.FileName);
-                                var description = vulnerability.Vulnerability ?? "";
-                                if (!string.IsNullOrWhiteSpace(vulnerability.Effect))
-                                    description += "\n\nImpact: " + vulnerability.Effect;
-                                toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
-                                {
-                                    Severity = NormalizeRiskLevel(vulnerability.RiskLevel),
-                                    Title = vulnerability.Title ?? "",
-                                    File = vulnerability.FileName ?? System.IO.Path.GetFileName(vulnerability.FilePath ?? ""),
-                                    Line = lineNo,
-                                    Column = columnNo,
-                                    AbsoluteFilePath = absFile,
-                                    Description = description,
-                                    Recommendation = vulnerability.Recommendation ?? "",
-                                    References = vulnerability.References ?? "",
-                                    CodeSnippet = TryDecodeBase64CodeSnippet(vulnerability.CodeSnippet)
-                                });
-                            }
-                            catch { /* row-level failure must not break the render */ }
+                                Severity = NormalizeRiskLevel(vulnerability.RiskLevel),
+                                Title = string.IsNullOrWhiteSpace(vulnerability.Title) ? "(untitled finding)" : vulnerability.Title,
+                                File = !string.IsNullOrWhiteSpace(vulnerability.FileName)
+                                    ? vulnerability.FileName
+                                    : (!string.IsNullOrWhiteSpace(vulnerability.FilePath) ? System.IO.Path.GetFileName(vulnerability.FilePath) : "(unknown file)"),
+                                Line = lineNo,
+                                Column = columnNo,
+                                AbsoluteFilePath = absFile,
+                                Description = description,
+                                Recommendation = vulnerability.Recommendation ?? "",
+                                References = vulnerability.References ?? "",
+                                CodeSnippet = TryDecodeBase64CodeSnippet(vulnerability.CodeSnippet)
+                            });
+                        }
+                        catch (Exception rowEx)
+                        {
+                            // Even if mapping fails, still add a minimal placeholder so count stays accurate.
+                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Row map failed ({rowEx.GetType().Name}: {rowEx.Message}) — adding placeholder\n"); } catch {}
+                            toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
+                            {
+                                Severity = "MEDIUM",
+                                Title = "(failed to render finding)",
+                                File = "?",
+                                Line = 0,
+                                Description = rowEx.Message ?? ""
+                            });
                         }
                     }
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} findings to Error List + {toolWindowRows.Count} to O360 tool window (no dedup)\n"); } catch {}
+
+                    // --- RECONCILIATION ASSERTION ---
+                    // The tool window row count MUST equal (server total - suppressed by ignore list).
+                    // If it doesn't, log a loud warning so we catch silent drift in field reports.
+                    int expected = serverTotalForAssert - suppressedByIgnore;
+                    if (toolWindowRows.Count != expected)
+                    {
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] RECONCILE WARN: expected {expected} rows (server {serverTotalForAssert} - {suppressedByIgnore} suppressed) but rendered {toolWindowRows.Count}\n"); } catch {}
+                    }
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} to Error List + {toolWindowRows.Count} to O360 tool window (server total={serverTotalForAssert}, suppressed={suppressedByIgnore})\n"); } catch {}
                 }
                 catch (Exception renderEx)
                 {
-                    // Rendering failure shouldn't nuke the whole scan — log and continue to summary
                     try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Render loop FAILED: {renderEx.GetType().Name}: {renderEx.Message}\n{renderEx.StackTrace}\n"); } catch {}
                 }
 

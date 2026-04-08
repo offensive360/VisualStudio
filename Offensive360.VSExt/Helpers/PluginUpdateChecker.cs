@@ -23,7 +23,7 @@ namespace Offensive360.VSExt.Helpers
     /// </summary>
     internal static class PluginUpdateChecker
     {
-        private const string CurrentVersion = "1.12.10";
+        private const string CurrentVersion = "1.12.11";
         private const string ReleasesApiUrl = "https://api.github.com/repos/offensive360/VisualStudio/releases/latest";
         private const string UserAgent = "Offensive360-VS-Plugin/" + CurrentVersion;
         private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(24);
