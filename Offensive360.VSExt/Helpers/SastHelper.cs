@@ -221,7 +221,19 @@ namespace Offensive360.VSExt.Helpers
 
                     if (extHttpCode == 0)
                     {
-                        throw new HttpRequestException("Cannot connect to the server. Check your endpoint URL and network connection.");
+                        // All transport attempts (curl, .NET HttpClient, Python) returned 0.
+                        // Include the body which carries the underlying error from whichever
+                        // attempt got closest (SSL handshake failure, connect timeout, etc.)
+                        var detail = string.IsNullOrWhiteSpace(extBody) ? "No diagnostic details available." : extBody;
+                        if (detail.Length > 400) detail = detail.Substring(0, 400) + "...";
+                        throw new HttpRequestException(
+                            $"Could not reach the O360 server after {maxRetries} attempts with multiple upload methods (curl, .NET HttpClient, Python).\n\n" +
+                            $"Underlying error: {detail}\n\n" +
+                            "Things to check:\n" +
+                            "• Is the server URL reachable from this machine? (try it in a browser)\n" +
+                            "• Does the corporate proxy / firewall allow HTTPS to the O360 server?\n" +
+                            "• Is the server's TLS configuration compatible (TLS 1.2+)?\n" +
+                            "• See C:\\Users\\<you>\\Desktop\\o360_scan_log.txt for the full diagnostic log.");
                     }
                     if (extHttpCode == 401 || extHttpCode == 403)
                     {
@@ -1056,23 +1068,87 @@ namespace Offensive360.VSExt.Helpers
         }
 
         /// <summary>
-        /// Posts a multipart scan upload. Tries curl first, falls back to Python (OpenSSL)
-        /// when curl fails due to Schannel SSL incompatibility with nginx renegotiation.
+        /// Posts a multipart scan upload with multiple fallback strategies:
+        /// 1. Git curl (preferred, handles most SSL edge cases)
+        /// 2. .NET HttpClient with forced TLS 1.2 + cert bypass (works when curl/SChannel hits nginx renegotiation)
+        /// 3. Python requests with OpenSSL (last resort, only if Python is installed)
         /// </summary>
         private static async Task<(int httpCode, string body)> PostScanViaCurl(string endpoint, string token, string zipFilePath, string projectName)
         {
-            // Try curl first
+            // Attempt 1: Git curl
             var curlResult = await PostScanViaCurlInternal(endpoint, token, zipFilePath, projectName);
             if (curlResult.httpCode != 0 && curlResult.httpCode != 502)
                 return curlResult;
 
-            // curl returned 0 (SSL hang) or 502 (bad gateway) — try Python with OpenSSL
+            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] curl returned HTTP {curlResult.httpCode}, trying .NET HttpClient fallback...\n"); } catch {}
+
+            // Attempt 2: .NET HttpClient with forced TLS 1.2 and cert bypass.
+            // This is the most reliable path when Git curl/SChannel can't negotiate
+            // with the customer's nginx — HttpClient uses a different TLS stack.
+            var dotnetResult = await PostScanViaDotNetAsync(endpoint, token, zipFilePath, projectName);
+            if (dotnetResult.httpCode != 0 && dotnetResult.httpCode != 502)
+                return dotnetResult;
+
+            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient returned HTTP {dotnetResult.httpCode}, trying Python fallback...\n"); } catch {}
+
+            // Attempt 3: Python requests with OpenSSL (last resort)
             var pythonResult = await PostScanViaPython(endpoint, token, zipFilePath, projectName);
             if (pythonResult.httpCode != 0)
                 return pythonResult;
 
-            // Both failed — return the curl result (will show appropriate error)
-            return curlResult.httpCode != 0 ? curlResult : pythonResult;
+            // All failed — return whichever got closest to a real response
+            if (curlResult.httpCode != 0) return curlResult;
+            if (dotnetResult.httpCode != 0) return dotnetResult;
+            return pythonResult;
+        }
+
+        /// <summary>
+        /// .NET HttpClient upload path. Forces TLS 1.2 and accepts any certificate.
+        /// Works on customer machines where Git curl's SChannel hits SSL renegotiation issues
+        /// with on-prem nginx, and where Python is not installed.
+        /// </summary>
+        private static async Task<(int httpCode, string body)> PostScanViaDotNetAsync(string endpoint, string token, string zipFilePath, string projectName)
+        {
+            try
+            {
+                // Force TLS 1.2 (older .NET Framework defaults to TLS 1.0/1.1 which nginx rejects)
+                try { System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12; } catch { }
+
+                var handler = new HttpClientHandler
+                {
+                    ServerCertificateCustomValidationCallback = (msg, cert, chain, errors) => true,
+                    AllowAutoRedirect = true
+                };
+
+                using (var client = new HttpClient(handler, disposeHandler: true))
+                {
+                    client.Timeout = TimeSpan.FromHours(4);
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                    using (var form = new MultipartFormDataContent())
+                    using (var fileStream = new FileStream(zipFilePath, FileMode.Open, FileAccess.Read))
+                    {
+                        var fileContent = new StreamContent(fileStream);
+                        fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
+                        form.Add(fileContent, "FileSource", $"{projectName}.zip");
+                        form.Add(new StringContent(projectName), "Name");
+                        form.Add(new StringContent("VsExtension"), "ExternalScanSourceType");
+
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient POST {endpoint}...\n"); } catch {}
+                        var resp = await client.PostAsync(endpoint, form).ConfigureAwait(false);
+                        var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient HTTP {(int)resp.StatusCode}, body length={body?.Length ?? 0}\n"); } catch {}
+                        return ((int)resp.StatusCode, body ?? "");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Flatten exception chain for logging
+                var root = ex; while (root.InnerException != null) root = root.InnerException;
+                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient EXCEPTION: {ex.GetType().Name}: {ex.Message} | Inner: {root.GetType().Name}: {root.Message}\n"); } catch {}
+                return (0, $".NET HttpClient error: {root.GetType().Name}: {root.Message}");
+            }
         }
 
         /// <summary>
@@ -1164,12 +1240,19 @@ except Exception as e:
             if (!File.Exists(curlPath))
                 curlPath = "curl";
 
+            // Capture stderr to a file so we can diagnose SSL / connection failures.
+            // Using -v + --stderr file is deadlock-safe because curl writes directly
+            // to the file; we don't read stderr from the pipe.
+            var stderrFile = Path.GetTempFileName();
+
             var psi = new ProcessStartInfo
             {
                 FileName = curlPath,
                 // Long timeouts for very large customer projects (~1GB source).
                 // connect-timeout 60s, max-time 14400s (4 hours).
-                Arguments = $"-sk --connect-timeout 60 --max-time 14400 " +
+                // --stderr writes verbose output to file (deadlock-safe).
+                Arguments = $"-skv --connect-timeout 60 --max-time 14400 " +
+                    $"--stderr \"{stderrFile}\" " +
                     $"-w \"|||HTTP_CODE:%{{http_code}}\" " +
                     $"-F \"FileSource=@{zipFilePath};type=application/zip\" " +
                     $"-F \"Name={projectName}\" " +
@@ -1179,42 +1262,63 @@ except Exception as e:
                 UseShellExecute = false,
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
-                RedirectStandardError = false  // Don't redirect stderr — prevents deadlock with large responses
+                RedirectStandardError = false
             };
 
             System.Diagnostics.Debug.WriteLine($"Offensive360: curl upload → {endpoint}");
 
-            using (var process = Process.Start(psi))
+            try
             {
-                // Read stdout asynchronously to avoid deadlocks
-                var stdoutBuilder = new System.Text.StringBuilder();
-                process.OutputDataReceived += (s, args) => { if (args.Data != null) stdoutBuilder.Append(args.Data); };
-                process.BeginOutputReadLine();
-
-                // Watchdog: 4h 5min — slightly longer than curl's --max-time 14400
-                // so curl always exits cleanly first if the upload is hung.
-                var exited = await Task.Run(() => process.WaitForExit(14700000));
-                if (!exited)
+                using (var process = Process.Start(psi))
                 {
-                    try { process.Kill(); } catch { }
-                    throw new TimeoutException("Scan upload timed out after 4 hours. Please contact your O360 administrator if your project is exceptionally large.");
+                    var stdoutBuilder = new System.Text.StringBuilder();
+                    process.OutputDataReceived += (s, args) => { if (args.Data != null) stdoutBuilder.Append(args.Data); };
+                    process.BeginOutputReadLine();
+
+                    // Watchdog: 4h 5min — slightly longer than curl's --max-time 14400
+                    var exited = await Task.Run(() => process.WaitForExit(14700000));
+                    if (!exited)
+                    {
+                        try { process.Kill(); } catch { }
+                        throw new TimeoutException("Scan upload timed out after 4 hours. Please contact your O360 administrator if your project is exceptionally large.");
+                    }
+
+                    var output = stdoutBuilder.ToString();
+
+                    // Parse response — HTTP code is after |||HTTP_CODE: marker
+                    var marker = "|||HTTP_CODE:";
+                    var markerIdx = output.LastIndexOf(marker);
+                    int httpCode = 0;
+                    string body = output;
+                    if (markerIdx >= 0)
+                    {
+                        int.TryParse(output.Substring(markerIdx + marker.Length).Trim(), out httpCode);
+                        body = output.Substring(0, markerIdx);
+                    }
+
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: curl result — HTTP {httpCode}, body length {body.Length}, exit {process.ExitCode}");
+
+                    // Log diagnostic info on failure so we can see *why* curl failed
+                    if (httpCode == 0 || process.ExitCode != 0)
+                    {
+                        try
+                        {
+                            var stderrContent = File.Exists(stderrFile) ? File.ReadAllText(stderrFile) : "";
+                            // Keep the last ~800 chars so the log isn't flooded
+                            if (stderrContent.Length > 800)
+                                stderrContent = "..." + stderrContent.Substring(stderrContent.Length - 800);
+                            File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt",
+                                $"[{DateTime.Now}] curl exit={process.ExitCode} httpCode={httpCode}\ncurl stderr tail:\n{stderrContent}\n");
+                        }
+                        catch { }
+                    }
+
+                    return (httpCode, body);
                 }
-
-                var output = stdoutBuilder.ToString();
-
-                // Parse response — HTTP code is after |||HTTP_CODE: marker
-                var marker = "|||HTTP_CODE:";
-                var markerIdx = output.LastIndexOf(marker);
-                int httpCode = 0;
-                string body = output;
-                if (markerIdx >= 0)
-                {
-                    int.TryParse(output.Substring(markerIdx + marker.Length).Trim(), out httpCode);
-                    body = output.Substring(0, markerIdx);
-                }
-
-                System.Diagnostics.Debug.WriteLine($"Offensive360: curl result — HTTP {httpCode}, body length {body.Length}");
-                return (httpCode, body);
+            }
+            finally
+            {
+                try { if (File.Exists(stderrFile)) File.Delete(stderrFile); } catch { }
             }
         }
 
