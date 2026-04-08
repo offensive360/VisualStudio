@@ -1,10 +1,10 @@
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using Newtonsoft.Json;
-using Offensive360.VSExt.Properties;
 using System;
 using System.Diagnostics;
-using System.IO;
+using System.Linq;
+using System.Net;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Threading.Tasks;
@@ -12,27 +12,39 @@ using System.Threading.Tasks;
 namespace Offensive360.VSExt.Helpers
 {
     /// <summary>
-    /// Option D — server-driven plugin update notifications.
-    /// On scan trigger, asks the IDECO server "is there a newer plugin?". If yes,
-    /// shows a one-time-per-day balloon with a link to the download URL. Endpoint
-    /// is optional on the server side: any failure (404, network, parse error) is
-    /// silently ignored, so this is fully backward-compatible with older servers.
+    /// Plugin update notifier — fetches the latest release directly from the
+    /// GitHub Releases API of offensive360/VisualStudio. No IDECO server
+    /// dependency: anyone with internet sees updates immediately the moment a
+    /// new release is published. Behaviour:
+    ///   * fire-and-forget on every scan trigger, never blocks
+    ///   * throttled (24h cache + once per session) so we never spam GitHub
+    ///   * silent on any failure (404, network, parse, rate-limit)
+    ///   * ALL errors swallowed — update notifications must NEVER break scans
     /// </summary>
     internal static class PluginUpdateChecker
     {
-        private const string PluginId = "vs";
-        private const string CurrentVersion = "1.12.3";
-        private const string UpdateEndpoint = "/app/api/PluginUpdate";
+        private const string CurrentVersion = "1.12.4";
+        private const string ReleasesApiUrl = "https://api.github.com/repos/offensive360/VisualStudio/releases/latest";
+        private const string UserAgent = "Offensive360-VS-Plugin/" + CurrentVersion;
         private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(24);
         private static DateTime _lastCheck = DateTime.MinValue;
         private static bool _notifiedThisSession = false;
 
-        private class UpdateResponse
+        private class GitHubRelease
         {
-            [JsonProperty("latestVersion")] public string LatestVersion { get; set; }
-            [JsonProperty("downloadUrl")] public string DownloadUrl { get; set; }
-            [JsonProperty("releaseNotes")] public string ReleaseNotes { get; set; }
-            [JsonProperty("mandatory")] public bool Mandatory { get; set; }
+            [JsonProperty("tag_name")] public string TagName { get; set; }
+            [JsonProperty("name")] public string Name { get; set; }
+            [JsonProperty("body")] public string Body { get; set; }
+            [JsonProperty("html_url")] public string HtmlUrl { get; set; }
+            [JsonProperty("draft")] public bool Draft { get; set; }
+            [JsonProperty("prerelease")] public bool Prerelease { get; set; }
+            [JsonProperty("assets")] public GitHubAsset[] Assets { get; set; }
+        }
+
+        private class GitHubAsset
+        {
+            [JsonProperty("name")] public string Name { get; set; }
+            [JsonProperty("browser_download_url")] public string BrowserDownloadUrl { get; set; }
         }
 
         /// <summary>
@@ -40,7 +52,6 @@ namespace Offensive360.VSExt.Helpers
         /// </summary>
         public static void CheckAsync()
         {
-            // Throttle: at most once per 24h, and at most once per session.
             if (_notifiedThisSession) return;
             if (DateTime.UtcNow - _lastCheck < CacheTtl) return;
             _lastCheck = DateTime.UtcNow;
@@ -49,29 +60,36 @@ namespace Offensive360.VSExt.Helpers
             {
                 try
                 {
-                    var baseUrl = Settings.Default.BaseUrl?.TrimEnd('/');
-                    var token = Settings.Default.AccessToken;
-                    if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(token)) return;
+                    // Force TLS 1.2 — older .NET Framework on Windows Server defaults to TLS 1.0/1.1 which GitHub rejects
+                    try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
 
-                    var url = $"{baseUrl}{UpdateEndpoint}?plugin={PluginId}&current={CurrentVersion}";
-                    var handler = new HttpClientHandler
-                    {
-                        ServerCertificateCustomValidationCallback = (m, c, ch, e) => true
-                    };
-                    using (var client = new HttpClient(handler, true))
+                    using (var client = new HttpClient())
                     {
                         client.Timeout = TimeSpan.FromSeconds(10);
-                        var req = new HttpRequestMessage { RequestUri = new Uri(url), Method = HttpMethod.Get };
-                        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                        var resp = await client.SendAsync(req).ConfigureAwait(false);
+                        client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+                        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+
+                        var resp = await client.GetAsync(ReleasesApiUrl).ConfigureAwait(false);
                         if (!resp.IsSuccessStatusCode) return;
                         var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                         if (string.IsNullOrWhiteSpace(body)) return;
-                        var info = JsonConvert.DeserializeObject<UpdateResponse>(body);
-                        if (info == null || string.IsNullOrWhiteSpace(info.LatestVersion)) return;
-                        if (!IsNewer(info.LatestVersion, CurrentVersion)) return;
+
+                        var release = JsonConvert.DeserializeObject<GitHubRelease>(body);
+                        if (release == null || release.Draft || release.Prerelease) return;
+                        if (string.IsNullOrWhiteSpace(release.TagName)) return;
+
+                        var latestVersion = release.TagName.TrimStart('v', 'V');
+                        if (!IsNewer(latestVersion, CurrentVersion)) return;
+
+                        // Find the .vsix asset (first one ending in .vsix wins)
+                        var vsix = release.Assets?.FirstOrDefault(a =>
+                            !string.IsNullOrEmpty(a?.Name) &&
+                            a.Name.EndsWith(".vsix", StringComparison.OrdinalIgnoreCase));
+                        var downloadUrl = vsix?.BrowserDownloadUrl ?? release.HtmlUrl;
+                        var notes = TruncateNotes(release.Body);
+
                         _notifiedThisSession = true;
-                        await ShowNotificationAsync(info).ConfigureAwait(false);
+                        await ShowNotificationAsync(latestVersion, downloadUrl, notes).ConfigureAwait(false);
                     }
                 }
                 catch
@@ -79,6 +97,18 @@ namespace Offensive360.VSExt.Helpers
                     // Silent: update notifications must NEVER block scans or surface errors.
                 }
             });
+        }
+
+        private static string TruncateNotes(string body)
+        {
+            if (string.IsNullOrWhiteSpace(body)) return "";
+            // Strip the trailing markdown noise we add to release notes
+            var idx = body.IndexOf("🤖 Generated with", StringComparison.Ordinal);
+            if (idx > 0) body = body.Substring(0, idx);
+            body = body.Trim();
+            // Cap at ~600 chars so the message box stays readable
+            if (body.Length > 600) body = body.Substring(0, 600).TrimEnd() + "…";
+            return body;
         }
 
         private static bool IsNewer(string serverVersion, string current)
@@ -107,31 +137,30 @@ namespace Offensive360.VSExt.Helpers
             return result;
         }
 
-        private static async Task ShowNotificationAsync(UpdateResponse info)
+        private static async Task ShowNotificationAsync(string latestVersion, string downloadUrl, string notes)
         {
             try
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var prefix = info.Mandatory ? "REQUIRED update available" : "Offensive 360: update available";
-                var msg = $"{prefix} — v{info.LatestVersion} (you have v{CurrentVersion}).";
-                if (!string.IsNullOrWhiteSpace(info.ReleaseNotes))
+                var msg = $"Offensive 360: a new plugin version is available — v{latestVersion} (you have v{CurrentVersion}).";
+                if (!string.IsNullOrWhiteSpace(notes))
                 {
-                    msg += $"\n{info.ReleaseNotes}";
+                    msg += $"\n\n{notes}";
                 }
-                if (!string.IsNullOrWhiteSpace(info.DownloadUrl))
+                if (!string.IsNullOrWhiteSpace(downloadUrl))
                 {
-                    msg += $"\n\nDownload: {info.DownloadUrl}\n\nClick OK to open the download page.";
+                    msg += $"\n\nDownload: {downloadUrl}\n\nClick OK to open the download page in your browser.";
                 }
                 var result = VsShellUtilities.ShowMessageBox(
                     ServiceProvider.GlobalProvider,
                     msg,
-                    "Offensive 360 — Plugin Update",
-                    info.Mandatory ? OLEMSGICON.OLEMSGICON_WARNING : OLEMSGICON.OLEMSGICON_INFO,
-                    string.IsNullOrWhiteSpace(info.DownloadUrl) ? OLEMSGBUTTON.OLEMSGBUTTON_OK : OLEMSGBUTTON.OLEMSGBUTTON_OKCANCEL,
+                    "Offensive 360 — Plugin Update Available",
+                    OLEMSGICON.OLEMSGICON_INFO,
+                    string.IsNullOrWhiteSpace(downloadUrl) ? OLEMSGBUTTON.OLEMSGBUTTON_OK : OLEMSGBUTTON.OLEMSGBUTTON_OKCANCEL,
                     OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
-                if (result == 1 /* IDOK */ && !string.IsNullOrWhiteSpace(info.DownloadUrl))
+                if (result == 1 /* IDOK */ && !string.IsNullOrWhiteSpace(downloadUrl))
                 {
-                    try { Process.Start(new ProcessStartInfo(info.DownloadUrl) { UseShellExecute = true }); } catch { }
+                    try { Process.Start(new ProcessStartInfo(downloadUrl) { UseShellExecute = true }); } catch { }
                 }
             }
             catch { /* notification UI failure must not break scans */ }
