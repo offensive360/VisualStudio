@@ -1,19 +1,19 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6" Version="1.12" Language="en-US" Publisher="Offensive 360" />
+        <Identity Id="Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6" Version="1.12.3" Language="en-US" Publisher="Offensive 360" />
         <DisplayName>Offensive 360</DisplayName>
         <Description xml:space="preserve">Secure code analysis that understands the code</Description>
         <Icon>Resources\logo.png</Icon>
     </Metadata>
     <Installation>
-        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 18.0)">
+        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 19.0)">
             <ProductArchitecture>amd64</ProductArchitecture>
         </InstallationTarget>
-        <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0, 18.0)">
+        <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0, 19.0)">
             <ProductArchitecture>amd64</ProductArchitecture>
         </InstallationTarget>
-        <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0, 18.0)">
+        <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0, 19.0)">
             <ProductArchitecture>amd64</ProductArchitecture>
         </InstallationTarget>
     </Installation>

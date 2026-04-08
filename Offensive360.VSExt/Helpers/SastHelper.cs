@@ -66,6 +66,9 @@ namespace Offensive360.VSExt.Helpers
             _scanInProgress = true;
             try
             {
+                // Option D — fire-and-forget plugin-update check (silent if server lacks endpoint)
+                try { PluginUpdateChecker.CheckAsync(); } catch { }
+
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ValidateSettings...\n"); } catch {}
                 await ValidateSettingsAsync();
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Validation passed!\n"); } catch {}
@@ -114,38 +117,17 @@ namespace Offensive360.VSExt.Helpers
                     return;
                 }
 
-                bool isIncremental = cached != null && diff.ChangedRelativePaths.Count < diff.CurrentHashes.Count;
-                var changedCount = diff.ChangedRelativePaths.Count;
+                // Always full scan: incremental path was a regression — when only changed files
+                // were uploaded, the server returned findings only for those files, and the result
+                // overwrote the cache, dropping every other finding in the solution. The API has
+                // no meaningful size limit (~2GB), so always uploading the full solution is correct.
                 var totalCount = diff.CurrentHashes.Count;
-
-                if (isIncremental)
+                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Preparing {totalCount} files for full scan...");
+                if (totalCount > LargeProjectFileThreshold)
                 {
-                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Preparing {changedCount} changed files (of {totalCount} total)...");
-                    System.Diagnostics.Debug.WriteLine($"Offensive360: Incremental scan — {changedCount} changed files out of {totalCount} total.");
+                    System.Diagnostics.Debug.WriteLine($"Offensive360: Large project detected ({totalCount} files). Scan may take longer.");
                 }
-                else
-                {
-                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Preparing {totalCount} files for full scan...");
-                    if (totalCount > LargeProjectFileThreshold)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"Offensive360: Large project detected ({totalCount} files). Scan may take longer.");
-                    }
-                }
-                string zipPath;
-                if (isIncremental)
-                {
-                    zipPath = await Task.Run(() => ZipSpecificFiles(solutionFolder, diff.ChangedRelativePaths));
-                    // If incremental zip is empty (changed files were all excluded), fall back to full scan
-                    if (zipPath == null || !File.Exists(zipPath) || new FileInfo(zipPath).Length < 100)
-                    {
-                        try { if (zipPath != null && File.Exists(zipPath)) File.Delete(zipPath); } catch { }
-                        zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
-                    }
-                }
-                else
-                {
-                    zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
-                }
+                string zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
                 _tempZipPath = zipPath;
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Zip created: {zipPath} ({new FileInfo(zipPath).Length / 1024}KB)\n"); } catch {}
 
@@ -634,7 +616,7 @@ namespace Offensive360.VSExt.Helpers
         {
             using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
             {
-                client.Timeout = TimeSpan.FromMinutes(60);
+                client.Timeout = TimeSpan.FromHours(4); // Long timeout for 1GB+ customer projects
 
                 var req = new HttpRequestMessage
                 {
@@ -977,7 +959,7 @@ namespace Offensive360.VSExt.Helpers
         {
             using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
             {
-                client.Timeout = TimeSpan.FromMinutes(60);
+                client.Timeout = TimeSpan.FromHours(4); // Long timeout for 1GB+ customer projects
 
                 var req = new HttpRequestMessage
                 {
@@ -1110,7 +1092,9 @@ except Exception as e:
             var psi = new ProcessStartInfo
             {
                 FileName = curlPath,
-                Arguments = $"-sk --connect-timeout 30 --max-time 900 " +
+                // Long timeouts for very large customer projects (~1GB source).
+                // connect-timeout 60s, max-time 14400s (4 hours).
+                Arguments = $"-sk --connect-timeout 60 --max-time 14400 " +
                     $"-w \"|||HTTP_CODE:%{{http_code}}\" " +
                     $"-F \"FileSource=@{zipFilePath};type=application/zip\" " +
                     $"-F \"Name={projectName}\" " +
@@ -1132,11 +1116,13 @@ except Exception as e:
                 process.OutputDataReceived += (s, args) => { if (args.Data != null) stdoutBuilder.Append(args.Data); };
                 process.BeginOutputReadLine();
 
-                var exited = await Task.Run(() => process.WaitForExit(960000));
+                // Watchdog: 4h 5min — slightly longer than curl's --max-time 14400
+                // so curl always exits cleanly first if the upload is hung.
+                var exited = await Task.Run(() => process.WaitForExit(14700000));
                 if (!exited)
                 {
                     try { process.Kill(); } catch { }
-                    throw new TimeoutException("Scan upload timed out after 16 minutes. For very large codebases, consider scanning individual folders.");
+                    throw new TimeoutException("Scan upload timed out after 4 hours. Please contact your O360 administrator if your project is exceptionally large.");
                 }
 
                 var output = stdoutBuilder.ToString();
@@ -1164,7 +1150,8 @@ except Exception as e:
         private static async Task<ScanResponse> WaitForScanAndFetchResultsAsync(IVsStatusbar statusBar, string projectId, string scanMessagePrefix)
         {
             var pollPeriod = TimeSpan.FromSeconds(10);
-            var maxWaitTime = TimeSpan.FromMinutes(60);
+            // 4-hour result polling cap for 1GB+ projects with long server-side analysis
+            var maxWaitTime = TimeSpan.FromHours(4);
             var stopWatch = new Stopwatch();
             stopWatch.Start();
             var firstPoll = true;

@@ -13,11 +13,23 @@ namespace Offensive360.VSExt.Helpers
     {
         private const string CacheDir = ".SASTO360";
         private const string CacheFile = "lastScanResults.json";
+        // Bump this whenever the cache schema changes. On load, if the version marker is
+        // missing or different, the existing cache is wiped (clean install upgrade).
+        private const string CacheSchemaVersion = "v2-2026-04-07";
+        private const string SchemaMarkerFile = "schema.version";
 
         public class CachedScan
         {
-            public DateTime Timestamp { get; set; }
+            // Lowercase JSON keys to share cache format with the Android Studio plugin
+            // (avoids cross-plugin double-scanning when both IDEs work on the same project).
+            [JsonProperty("timestamp")]
+            public long Timestamp { get; set; }
+
+            [JsonProperty("fileHashes")]
             public Dictionary<string, string> FileHashes { get; set; } = new Dictionary<string, string>();
+
+            // AS plugin writes "findings"; we accept both keys on read for backward compat.
+            [JsonProperty("findings")]
             public List<SAST.VSExt.Models.VulnerabilityResponse> Vulnerabilities { get; set; } = new List<SAST.VSExt.Models.VulnerabilityResponse>();
         }
 
@@ -206,7 +218,7 @@ namespace Offensive360.VSExt.Helpers
             {
                 var cached = new CachedScan
                 {
-                    Timestamp = DateTime.UtcNow,
+                    Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     FileHashes = fileHashes,
                     Vulnerabilities = vulnerabilities
                 };
@@ -216,10 +228,35 @@ namespace Offensive360.VSExt.Helpers
             catch { /* best-effort caching */ }
         }
 
+        /// <summary>
+        /// Wipes any cache from a prior plugin version on first load after upgrade.
+        /// Idempotent: writes a schema-version marker so this only runs once per upgrade.
+        /// </summary>
+        private static void EnsureFreshSchema(string solutionFolder)
+        {
+            try
+            {
+                var dir = Path.Combine(solutionFolder, CacheDir);
+                if (!Directory.Exists(dir)) return;
+                var markerPath = Path.Combine(dir, SchemaMarkerFile);
+                string existing = File.Exists(markerPath) ? File.ReadAllText(markerPath).Trim() : "";
+                if (existing == CacheSchemaVersion) return;
+                // Schema changed (or first run after upgrade): delete stale cache file
+                var cachePath = Path.Combine(dir, CacheFile);
+                if (File.Exists(cachePath))
+                {
+                    try { File.Delete(cachePath); } catch { }
+                }
+                File.WriteAllText(markerPath, CacheSchemaVersion);
+            }
+            catch { /* best-effort cleanup */ }
+        }
+
         public static CachedScan Load(string solutionFolder)
         {
             try
             {
+                EnsureFreshSchema(solutionFolder);
                 var path = GetCachePath(solutionFolder);
                 if (!File.Exists(path)) return null;
                 var json = File.ReadAllText(path);
