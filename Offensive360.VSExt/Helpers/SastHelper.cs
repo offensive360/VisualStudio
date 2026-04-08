@@ -195,13 +195,18 @@ namespace Offensive360.VSExt.Helpers
                     var extEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}";
                     string extBody = null;
                     int extHttpCode = 0;
-                    const int maxRetries = 3;
+                    // Retry budget tuned for slow backends + nginx gateway timeouts (502/504):
+                    // 6 attempts with exponential backoff 15s, 30s, 60s, 120s, 240s — total ~8 min of
+                    // recovery time on top of curl's own 4h --max-time per attempt.
+                    const int maxRetries = 6;
+                    int[] backoffSeconds = { 0, 15, 30, 60, 120, 240 };
                     for (int attempt = 1; attempt <= maxRetries; attempt++)
                     {
                         if (attempt > 1)
                         {
-                            await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Retrying scan (attempt {attempt}/{maxRetries})...");
-                            await Task.Delay(5000 * attempt);
+                            var waitSec = attempt - 1 < backoffSeconds.Length ? backoffSeconds[attempt - 1] : 240;
+                            await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Server busy (HTTP {extHttpCode}) — waiting {waitSec}s before retry {attempt}/{maxRetries}...");
+                            await Task.Delay(waitSec * 1000);
                         }
                         else
                         {
@@ -210,8 +215,8 @@ namespace Offensive360.VSExt.Helpers
                         (extHttpCode, extBody) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, zipPath, projectName);
                         if (extHttpCode >= 200 && extHttpCode < 300) break; // success
                         if (extHttpCode == 0 || extHttpCode == 401 || extHttpCode == 403) break; // non-retryable
-                        // 500+ → retry
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode} on attempt {attempt}, retrying...\n"); } catch {}
+                        // 5xx → retry (including 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout)
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode} on attempt {attempt}/{maxRetries}, will retry with longer backoff\n"); } catch {}
                     }
 
                     if (extHttpCode == 0)
@@ -226,9 +231,19 @@ namespace Offensive360.VSExt.Helpers
                             "Dashboard > Settings > Tokens\n\n" +
                             "Then update it in Tools > Options > Offensive360.");
                     }
+                    if (extHttpCode == 502 || extHttpCode == 503 || extHttpCode == 504)
+                    {
+                        // Nginx gateway errors — backend is too slow or briefly unavailable. This is
+                        // NOT a plugin config issue, so don't tell the user to check their settings.
+                        var name = extHttpCode == 502 ? "Bad Gateway" : extHttpCode == 503 ? "Service Unavailable" : "Gateway Timeout";
+                        throw new HttpRequestException(
+                            $"The O360 server is taking too long to respond (HTTP {extHttpCode} {name}) after {maxRetries} attempts over several minutes.\n\n" +
+                            "This usually means the SAST backend is under heavy load or your project is very large. " +
+                            "Wait a few minutes and try again. If the problem persists, contact your O360 administrator — they may need to increase the server-side proxy timeout (nginx proxy_read_timeout on port 9091).");
+                    }
                     if (extHttpCode >= 500)
                     {
-                        throw new HttpRequestException($"Server error (HTTP {extHttpCode}) after {maxRetries} attempts. The server may be temporarily overloaded — please try again in a minute.");
+                        throw new HttpRequestException($"The O360 server returned HTTP {extHttpCode} after {maxRetries} attempts. Wait a few minutes and try again; if the problem persists, contact your O360 administrator.");
                     }
                     if (extHttpCode < 200 || extHttpCode >= 300)
                     {
