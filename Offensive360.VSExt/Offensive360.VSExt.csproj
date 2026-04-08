@@ -51,6 +51,7 @@
     <Compile Include="Commands\SuppressCommand.cs" />
     <Compile Include="Commands\GetHelpCommand.cs" />
     <Compile Include="Commands\ClearAllErrorCommand.cs" />
+    <Compile Include="Helpers\O360Logger.cs" />
     <Compile Include="Helpers\PluginUpdateChecker.cs" />
     <Compile Include="Helpers\ScanCache.cs" />
     <Compile Include="Helpers\SastHelper.cs" />

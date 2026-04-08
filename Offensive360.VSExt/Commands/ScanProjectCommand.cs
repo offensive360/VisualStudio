@@ -155,7 +155,7 @@ namespace Offensive360.VSExt
                 }
 
                 System.Diagnostics.Debug.WriteLine($"Offensive360: Scanning path: {solutionPath}");
-                try { System.IO.File.WriteAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Scan starting. Path: {solutionPath}\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"Scan starting. Path: {solutionPath}"); } catch {}
                 await _errorListProvider.ScanProjectAndShowVulnerabilitiesAsync(_statusBar, solutionPath);
             }
             catch (Exception ex)
@@ -165,14 +165,14 @@ namespace Offensive360.VSExt
                 while (root.InnerException != null) root = root.InnerException;
                 var detail = $"{root.GetType().Name}: {root.Message}";
                 System.Diagnostics.Debug.WriteLine($"Offensive360: Scan error — {detail}");
-                try { System.IO.File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}\nInner: {detail}\n{ex.StackTrace}\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}\nInner: {detail}\n{ex.StackTrace}"); } catch {}
                 _errorListProvider.LogException($"Offensive360 Scan Error: {detail}");
                 System.Windows.MessageBox.Show(
                     $"Scan failed: {detail}\n\n" +
                     "Troubleshooting:\n" +
                     "• Check server URL and access token in Tools > Options > Offensive360\n" +
                     "• Verify the server is reachable from this machine\n" +
-                    "• See full log at C:\\Users\\<you>\\Desktop\\o360_scan_log.txt",
+                    $"• See full log at {Offensive360.VSExt.Helpers.O360Logger.GetLogPath()}",
                     "Offensive360 SAST - Scan Error",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Warning);

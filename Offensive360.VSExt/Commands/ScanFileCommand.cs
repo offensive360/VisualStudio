@@ -129,12 +129,12 @@ namespace Offensive360.VSExt
                     return;
                 }
 
-                try { File.WriteAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Scan File -> scanning: {scanPath} (file: {filePath})\n"); } catch { }
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"Scan File -> scanning: {scanPath} (file: {filePath})"); } catch { }
                 await _errorListProvider.ScanProjectAndShowVulnerabilitiesAsync(_statusBar, scanPath);
             }
             catch (Exception ex)
             {
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}\n"); } catch { }
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}"); } catch { }
                 _errorListProvider.LogException($"Offensive360 Scan Error: {ex.Message}");
                 System.Windows.MessageBox.Show(
                     $"Scan failed: {ex.Message}\n\nCheck Tools > Options > Offensive360.",

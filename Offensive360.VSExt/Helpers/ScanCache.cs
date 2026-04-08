@@ -313,7 +313,7 @@ namespace Offensive360.VSExt.Helpers
                     cached.Vulnerabilities != null &&
                     cached.TotalVulnerabilities.Value != cached.Vulnerabilities.Count)
                 {
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Cache integrity check FAILED: stored total={cached.TotalVulnerabilities.Value} but array has {cached.Vulnerabilities.Count} items — discarding cache, will rescan\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Cache integrity check FAILED: stored total={cached.TotalVulnerabilities.Value} but array has {cached.Vulnerabilities.Count} items — discarding cache, will rescan"); } catch {}
                     try { File.Delete(path); } catch { }
                     return null;
                 }

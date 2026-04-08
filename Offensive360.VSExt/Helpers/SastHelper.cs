@@ -69,12 +69,12 @@ namespace Offensive360.VSExt.Helpers
                 // Option D — fire-and-forget plugin-update check (silent if server lacks endpoint)
                 try { PluginUpdateChecker.CheckAsync(); } catch { }
 
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ValidateSettings...\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"ValidateSettings..."); } catch {}
                 await ValidateSettingsAsync();
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Validation passed!\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"Validation passed!"); } catch {}
 
                 var solutionFolder = GetSolutionFolderPath(solutionFilePath);
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] SolutionFolder: {solutionFolder}\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"SolutionFolder: {solutionFolder}"); } catch {}
 
                 // --- Incremental diff: compute on background thread to avoid UI freeze ---
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 1/5] Validating settings...");
@@ -86,11 +86,11 @@ namespace Offensive360.VSExt.Helpers
                 try
                 {
                     diff = await ScanCache.ComputeIncrementalDiffAsync(solutionFolder, cached);
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Diff computed. HasChanges={diff.HasChanges} Changed={diff.ChangedRelativePaths.Count} Total={diff.CurrentHashes.Count}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Diff computed. HasChanges={diff.HasChanges} Changed={diff.ChangedRelativePaths.Count} Total={diff.CurrentHashes.Count}"); } catch {}
                 }
                 catch (Exception diffEx)
                 {
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ComputeIncrementalDiff FAILED: {diffEx.GetType().Name}: {diffEx.Message}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"ComputeIncrementalDiff FAILED: {diffEx.GetType().Name}: {diffEx.Message}"); } catch {}
                     // Fall back to full scan if diff fails
                     diff = new ScanCache.IncrementalDiff { HasChanges = true, ChangedRelativePaths = new System.Collections.Generic.List<string>(), DeletedRelativePaths = new System.Collections.Generic.List<string>(), CurrentHashes = new System.Collections.Generic.Dictionary<string, string>() };
                 }
@@ -129,7 +129,7 @@ namespace Offensive360.VSExt.Helpers
                 }
                 string zipPath = await Task.Run(() => ZipFolderToFile(solutionFolder));
                 _tempZipPath = zipPath;
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Zip created: {zipPath} ({new FileInfo(zipPath).Length / 1024}KB)\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"Zip created: {zipPath} ({new FileInfo(zipPath).Length / 1024}KB)"); } catch {}
 
                 // Warn about large uploads
                 var zipSizeMb = new FileInfo(zipPath).Length / (1024 * 1024);
@@ -139,21 +139,63 @@ namespace Offensive360.VSExt.Helpers
                     System.Diagnostics.Debug.WriteLine($"Offensive360: Large zip file ({zipSizeMb}MB). Upload may take longer.");
                 }
 
-                var projectName = solutionFolder.TrimEnd('\\', '/').Split('\\').Last();
-                projectName = projectName?.Length > 13 ? projectName.Substring(0, 13) : projectName;
+                // Solution name (used for dashboard project lookup and as the temp-scan name).
+                var solutionBaseName = solutionFolder.TrimEnd('\\', '/').Split('\\').Last() ?? "project";
+                var projectName = solutionBaseName?.Length > 13 ? solutionBaseName.Substring(0, 13) : solutionBaseName;
                 projectName = $"{projectName}_{Guid.NewGuid()}";
 
                 ScanResponse scanResponse = null;
 
-                // Use scanProjectFile + polling (same as working VSCode v1.0.4 plugin).
-                // Falls back to ExternalScan only for External tokens that get 403.
+                // === DASHBOARD-FIRST LOOKUP (v1.12.13) ===
+                // Try to find an existing dashboard project that matches the solution name.
+                // If found, read its canonical findings from /LangaugeScanResult (the same
+                // endpoint the dashboard UI reads). Plugin display = dashboard display,
+                // byte-for-byte, no scan/upload needed. Any plugin-triggered scans fall back
+                // to a TEMPORARY scan with keepInvisibleAndDeletePostScan=True so nothing
+                // persists on the server.
                 try
+                {
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Looking up dashboard project...");
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-first: looking up '{solutionBaseName}' in /Project"); } catch {}
+                    var dashProjectId = await FindMatchingDashboardProjectAsync(solutionBaseName);
+                    if (!string.IsNullOrEmpty(dashProjectId))
+                    {
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-first: matched projectId={dashProjectId}, fetching findings"); } catch {}
+                        await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Reading dashboard findings...");
+                        scanResponse = await FetchLangResultsAsync(dashProjectId);
+                        var dashCount = scanResponse?.Vulnerabilities?.Count() ?? 0;
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-first: got {dashCount} canonical findings (matches dashboard exactly)"); } catch {}
+                    }
+                    else
+                    {
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-first: no matching project, will run temporary scan"); } catch {}
+                    }
+                }
+                catch (Exception dashEx)
+                {
+                    // Server may not have granted External tokens read access yet, OR the server
+                    // is in license lock. Fall through to temporary scan (zero regression).
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-first lookup failed ({dashEx.GetType().Name}: {dashEx.Message}) — will run temporary scan"); } catch {}
+                    // If it's a license lock, surface that clearly to the user instead of a scan error.
+                    var msg = dashEx.Message ?? "";
+                    if (msg.IndexOf("LICENSE_REQUIRED", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        throw new HttpRequestException(
+                            "The Offensive 360 server is locked due to a license issue and is rejecting all requests. " +
+                            "Please contact your Offensive 360 administrator to reactivate the license. " +
+                            "Once reactivated, scans will resume automatically.");
+                    }
+                }
+
+                // If we got canonical dashboard findings above, skip the scan entirely.
+                // Otherwise run a TEMPORARY scan (auto-deletes on the server, no trace).
+                if (scanResponse == null) try
                 {
                     await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Uploading ({(new FileInfo(zipPath).Length / 1024):N0} KB)...");
                     var scanEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{scanFileEndpoint}";
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Calling scanProjectFile: {scanEndpoint}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"No dashboard match — running temporary scan via scanProjectFile: {scanEndpoint}"); } catch {}
                     var (httpCode, projectIdStr) = await PostScanViaCurl(scanEndpoint, Settings.Default.AccessToken, zipPath, projectName);
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] scanProjectFile returned HTTP {httpCode}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"scanProjectFile returned HTTP {httpCode}"); } catch {}
 
                     if (httpCode == 0)
                     {
@@ -175,10 +217,10 @@ namespace Offensive360.VSExt.Helpers
                     if (httpCode == 413)
                     {
                         throw new HttpRequestException(
-                            $"Upload too large (HTTP 413). The server's nginx has a file size limit.\n\n" +
-                            $"Options:\n" +
-                            $"• Ask your O360 administrator to increase nginx 'client_max_body_size' on port 9091\n" +
-                            $"• Scan a smaller subset of files (individual folders instead of whole solution)");
+                            "Upload too large (HTTP 413). The server has a maximum upload size limit.\n\n" +
+                            "Options:\n" +
+                            "• Ask your Offensive 360 administrator to increase the server-side upload size limit\n" +
+                            "• Scan a smaller subset of files (individual folders instead of whole solution)");
                     }
                     if (httpCode < 200 || httpCode >= 300)
                     {
@@ -216,7 +258,7 @@ namespace Offensive360.VSExt.Helpers
                         if (extHttpCode >= 200 && extHttpCode < 300) break; // success
                         if (extHttpCode == 0 || extHttpCode == 401 || extHttpCode == 403) break; // non-retryable
                         // 5xx → retry (including 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout)
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode} on attempt {attempt}/{maxRetries}, will retry with longer backoff\n"); } catch {}
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"ExternalScan HTTP {extHttpCode} on attempt {attempt}/{maxRetries}, will retry with longer backoff"); } catch {}
                     }
 
                     if (extHttpCode == 0)
@@ -227,60 +269,67 @@ namespace Offensive360.VSExt.Helpers
                         var detail = string.IsNullOrWhiteSpace(extBody) ? "No diagnostic details available." : extBody;
                         if (detail.Length > 400) detail = detail.Substring(0, 400) + "...";
                         throw new HttpRequestException(
-                            $"Could not reach the O360 server after {maxRetries} attempts with multiple upload methods (curl, .NET HttpClient, Python).\n\n" +
+                            $"Could not reach the Offensive 360 server after {maxRetries} attempts with multiple upload methods (curl, .NET HttpClient, Python).\n\n" +
                             $"Underlying error: {detail}\n\n" +
                             "Things to check:\n" +
                             "• Is the server URL reachable from this machine? (try it in a browser)\n" +
-                            "• Does the corporate proxy / firewall allow HTTPS to the O360 server?\n" +
+                            "• Does the corporate proxy / firewall allow HTTPS to the Offensive 360 server?\n" +
                             "• Is the server's TLS configuration compatible (TLS 1.2+)?\n" +
-                            "• See C:\\Users\\<you>\\Desktop\\o360_scan_log.txt for the full diagnostic log.");
+                            $"• See {O360Logger.GetLogPath()} for the full diagnostic log.");
                     }
                     if (extHttpCode == 401 || extHttpCode == 403)
                     {
+                        // License-lock detection: server returns "LICENSE_REQUIRED" body when
+                        // its license enforcement layer rejects the request. Surface this as
+                        // a clear, vendor-neutral message instead of misattributing to the token.
+                        if (!string.IsNullOrEmpty(extBody) && extBody.IndexOf("LICENSE_REQUIRED", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            throw new HttpRequestException(
+                                "The Offensive 360 server is locked due to a license issue and is rejecting all requests.\n\n" +
+                                "Server response: " + (extBody.Length > 300 ? extBody.Substring(0, 300) + "..." : extBody) + "\n\n" +
+                                "Please contact your Offensive 360 administrator to reactivate the license. " +
+                                "Once the license is reactivated, scans will resume automatically.");
+                        }
                         throw new UnauthorizedAccessException(
                             "Your access token is invalid or expired (HTTP " + extHttpCode + ").\n\n" +
-                            "Please ask your O360 administrator to generate a new token from:\n" +
-                            "Dashboard > Settings > Tokens\n\n" +
-                            "Then update it in Tools > Options > Offensive360.");
+                            "Please ask your Offensive 360 administrator to generate a new token, " +
+                            "then update it in Tools > Options > Offensive360.");
                     }
                     if (extHttpCode == 502 || extHttpCode == 503 || extHttpCode == 504)
                     {
-                        // Nginx gateway errors — backend is too slow or briefly unavailable. This is
+                        // Gateway errors — backend is too slow or briefly unavailable. This is
                         // NOT a plugin config issue, so don't tell the user to check their settings.
                         var name = extHttpCode == 502 ? "Bad Gateway" : extHttpCode == 503 ? "Service Unavailable" : "Gateway Timeout";
                         throw new HttpRequestException(
-                            $"The O360 server is taking too long to respond (HTTP {extHttpCode} {name}) after {maxRetries} attempts over several minutes.\n\n" +
-                            "This usually means the SAST backend is under heavy load or your project is very large. " +
-                            "Wait a few minutes and try again. If the problem persists, contact your O360 administrator — they may need to increase the server-side proxy timeout (nginx proxy_read_timeout on port 9091).");
+                            $"The Offensive 360 server is taking too long to respond (HTTP {extHttpCode} {name}) after {maxRetries} attempts over several minutes.\n\n" +
+                            "This usually means the backend is under heavy load or your project is very large. " +
+                            "Wait a few minutes and try again. If the problem persists, contact your Offensive 360 administrator — they may need to increase the server-side proxy timeout.");
                     }
                     if (extHttpCode >= 500)
                     {
-                        throw new HttpRequestException($"The O360 server returned HTTP {extHttpCode} after {maxRetries} attempts. Wait a few minutes and try again; if the problem persists, contact your O360 administrator.");
+                        throw new HttpRequestException($"The Offensive 360 server returned HTTP {extHttpCode} after {maxRetries} attempts. Wait a few minutes and try again; if the problem persists, contact your Offensive 360 administrator.");
                     }
                     if (extHttpCode < 200 || extHttpCode >= 300)
                     {
                         throw new HttpRequestException($"Server returned HTTP {extHttpCode}. Check your endpoint URL and access token.");
                     }
 
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode}, body length={extBody?.Length ?? 0}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"ExternalScan HTTP {extHttpCode}, body length={extBody?.Length ?? 0}"); } catch {}
                     scanResponse = JsonConvert.DeserializeObject<ScanResponse>(extBody);
                     var vulnCount = scanResponse?.Vulnerabilities?.Count() ?? 0;
                     var serverTotal = scanResponse?.TotalVulnerabilities;
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Deserialized: array={vulnCount}, totalVulnerabilities={(serverTotal?.ToString() ?? "(not present)")}\n"); } catch {}
+                    try { O360Logger.Log($"Deserialized: array={vulnCount}, totalVulnerabilities={(serverTotal?.ToString() ?? "(not present)")}"); } catch {}
                     if (serverTotal.HasValue && serverTotal.Value != vulnCount)
                     {
                         // Should never happen with the 2026-04-08 backend update, but log loudly if it does
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] WARN: server reported totalVulnerabilities={serverTotal.Value} but array has {vulnCount} items — using server total as canonical\n"); } catch {}
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"WARN: server reported totalVulnerabilities={serverTotal.Value} but array has {vulnCount} items — using server total as canonical"); } catch {}
                     }
                     if (scanResponse?.Vulnerabilities == null)
                     {
                         scanResponse = new ScanResponse { Vulnerabilities = new List<VulnerabilityResponse>() };
                     }
 
-                    // Extract projectId for server cleanup. As of the 2026-04-08 backend
-                    // update, the ExternalScan inline response is the canonical source
-                    // (totalVulnerabilities == vulnerabilities.length == dashboard count),
-                    // so we no longer re-query /LangaugeScanResult.
+                    // Extract projectId from the ExternalScan response.
                     string dashboardProjectId = null;
                     try
                     {
@@ -289,10 +338,41 @@ namespace Offensive360.VSExt.Helpers
                     }
                     catch { }
 
+                    // DASHBOARD-MATCH MODE (v1.12.13):
+                    // After ExternalScan creates/updates the dashboard project, try to
+                    // fetch the canonical findings from /LangaugeScanResult — the SAME
+                    // endpoint the dashboard UI reads. This guarantees plugin display
+                    // is byte-identical to the dashboard for the same project. If the
+                    // server hasn't granted External tokens read access yet, this returns
+                    // 403 and we silently fall back to the inline ExternalScan response
+                    // (zero regression for current customers).
                     if (!string.IsNullOrEmpty(dashboardProjectId))
                     {
-                        // Best-effort server-side project cleanup (no-op on failure)
-                        try { await DeleteProjectAsync(dashboardProjectId); } catch { }
+                        try
+                        {
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-match: fetching /LangaugeScanResult for projectId={dashboardProjectId}"); } catch {}
+                            var canonical = await FetchLangResultsAsync(dashboardProjectId);
+                            var canonicalCount = canonical?.Vulnerabilities?.Count() ?? 0;
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-match: got {canonicalCount} canonical findings"); } catch {}
+                            if (canonical?.Vulnerabilities != null && canonicalCount > 0)
+                            {
+                                // Replace the inline ExternalScan response with the canonical
+                                // dashboard findings. Plugin display will now match dashboard 1:1.
+                                scanResponse = canonical;
+                                if (scanResponse.TotalVulnerabilities == null)
+                                    scanResponse.TotalVulnerabilities = canonicalCount;
+                            }
+                        }
+                        catch (Exception langEx)
+                        {
+                            // Likely 403 (server change not deployed yet) or LICENSE_REQUIRED.
+                            // Fall back to the inline ExternalScan response — no regression.
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"Dashboard-match unavailable ({langEx.GetType().Name}: {langEx.Message}) — using inline ExternalScan results"); } catch {}
+                        }
+
+                        // NOTE: do NOT delete the project anymore — we want it to persist
+                        // on the dashboard so re-scans return the same projectId and the
+                        // findings match across plugin and dashboard.
                     }
                 }
                 finally
@@ -304,7 +384,7 @@ namespace Offensive360.VSExt.Helpers
                 // because server file paths don't reliably match local relative paths.
                 // Each scan returns the complete set for the uploaded files; no merging needed.
                 await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 5/5] Processing results...");
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Processing results...\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] Processing results..."); } catch {}
 
                 // RECONCILIATION: wipe BOTH UIs (Error List + O360 tool window) before
                 // we start populating. Guarantees no stale rows from a prior scan can
@@ -314,18 +394,18 @@ namespace Offensive360.VSExt.Helpers
                 try { Offensive360.VSExt.ToolWindow.FindingsStore.Clear(); } catch { }
 
                 var finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] finalVulnerabilities.Count={finalVulnerabilities.Count}\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] finalVulnerabilities.Count={finalVulnerabilities.Count}"); } catch {}
 
                 // Save merged results + current hashes + server's canonical total to cache (non-fatal)
                 try
                 {
                     ScanCache.Save(solutionFolder, finalVulnerabilities, diff.CurrentHashes, scanResponse?.TotalVulnerabilities);
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] ScanCache.Save OK (serverTotal={(scanResponse?.TotalVulnerabilities?.ToString() ?? "n/a")})\n"); } catch {}
+                    try { O360Logger.Log($"[Step 5] ScanCache.Save OK (serverTotal={(scanResponse?.TotalVulnerabilities?.ToString() ?? "n/a")})"); } catch {}
                 }
                 catch (Exception cacheEx)
                 {
                     // Cache save failure must never break display of results
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] ScanCache.Save WARN: {cacheEx.GetType().Name}: {cacheEx.Message}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] ScanCache.Save WARN: {cacheEx.GetType().Name}: {cacheEx.Message}"); } catch {}
                 }
 
                 string[] ignoredVulnerabilities;
@@ -371,7 +451,7 @@ namespace Offensive360.VSExt.Helpers
                         try { Log(_errorListProvider, vulnerability); rendered++; }
                         catch (Exception logEx)
                         {
-                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Log finding skipped: {logEx.GetType().Name}: {logEx.Message}\n"); } catch {}
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] Log finding skipped: {logEx.GetType().Name}: {logEx.Message}"); } catch {}
                         }
 
                         // Also append to the dedicated Offensive 360 tool window.
@@ -400,7 +480,7 @@ namespace Offensive360.VSExt.Helpers
                         catch (Exception rowEx)
                         {
                             // Even if mapping fails, still add a minimal placeholder so count stays accurate.
-                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Row map failed ({rowEx.GetType().Name}: {rowEx.Message}) — adding placeholder\n"); } catch {}
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] Row map failed ({rowEx.GetType().Name}: {rowEx.Message}) — adding placeholder"); } catch {}
                             toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
                             {
                                 Severity = "MEDIUM",
@@ -418,13 +498,13 @@ namespace Offensive360.VSExt.Helpers
                     int expected = serverTotalForAssert - suppressedByIgnore;
                     if (toolWindowRows.Count != expected)
                     {
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] RECONCILE WARN: expected {expected} rows (server {serverTotalForAssert} - {suppressedByIgnore} suppressed) but rendered {toolWindowRows.Count}\n"); } catch {}
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] RECONCILE WARN: expected {expected} rows (server {serverTotalForAssert} - {suppressedByIgnore} suppressed) but rendered {toolWindowRows.Count}"); } catch {}
                     }
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} to Error List + {toolWindowRows.Count} to O360 tool window (server total={serverTotalForAssert}, suppressed={suppressedByIgnore})\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] Rendered {rendered} to Error List + {toolWindowRows.Count} to O360 tool window (server total={serverTotalForAssert}, suppressed={suppressedByIgnore})"); } catch {}
                 }
                 catch (Exception renderEx)
                 {
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Render loop FAILED: {renderEx.GetType().Name}: {renderEx.Message}\n{renderEx.StackTrace}\n"); } catch {}
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Step 5] Render loop FAILED: {renderEx.GetType().Name}: {renderEx.Message}\n{renderEx.StackTrace}"); } catch {}
                 }
 
                 // Push into the dedicated tool window store (UI thread) and open the window.
@@ -1152,7 +1232,7 @@ namespace Offensive360.VSExt.Helpers
             if (curlResult.httpCode != 0 && curlResult.httpCode != 502)
                 return curlResult;
 
-            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] curl returned HTTP {curlResult.httpCode}, trying .NET HttpClient fallback...\n"); } catch {}
+            try { Offensive360.VSExt.Helpers.O360Logger.Log($"curl returned HTTP {curlResult.httpCode}, trying .NET HttpClient fallback..."); } catch {}
 
             // Attempt 2: .NET HttpClient with forced TLS 1.2 and cert bypass.
             // This is the most reliable path when Git curl/SChannel can't negotiate
@@ -1161,7 +1241,7 @@ namespace Offensive360.VSExt.Helpers
             if (dotnetResult.httpCode != 0 && dotnetResult.httpCode != 502)
                 return dotnetResult;
 
-            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient returned HTTP {dotnetResult.httpCode}, trying Python fallback...\n"); } catch {}
+            try { Offensive360.VSExt.Helpers.O360Logger.Log($".NET HttpClient returned HTTP {dotnetResult.httpCode}, trying Python fallback..."); } catch {}
 
             // Attempt 3: Python requests with OpenSSL (last resort)
             var pythonResult = await PostScanViaPython(endpoint, token, zipFilePath, projectName);
@@ -1205,11 +1285,17 @@ namespace Offensive360.VSExt.Helpers
                         form.Add(fileContent, "FileSource", $"{projectName}.zip");
                         form.Add(new StringContent(projectName), "Name");
                         form.Add(new StringContent("VsExtension"), "ExternalScanSourceType");
+                        // Temporary scan — server auto-deletes the project after the scan.
+                        // Plugin-triggered scans MUST NOT persist on the dashboard.
+                        if (endpoint.IndexOf("/ExternalScan", StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            form.Add(new StringContent("True"), "KeepInvisibleAndDeletePostScan");
+                        }
 
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient POST {endpoint}...\n"); } catch {}
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($".NET HttpClient POST {endpoint}..."); } catch {}
                         var resp = await client.PostAsync(endpoint, form).ConfigureAwait(false);
                         var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
-                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient HTTP {(int)resp.StatusCode}, body length={body?.Length ?? 0}\n"); } catch {}
+                        try { Offensive360.VSExt.Helpers.O360Logger.Log($".NET HttpClient HTTP {(int)resp.StatusCode}, body length={body?.Length ?? 0}"); } catch {}
                         return ((int)resp.StatusCode, body ?? "");
                     }
                 }
@@ -1218,7 +1304,7 @@ namespace Offensive360.VSExt.Helpers
             {
                 // Flatten exception chain for logging
                 var root = ex; while (root.InnerException != null) root = root.InnerException;
-                try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] .NET HttpClient EXCEPTION: {ex.GetType().Name}: {ex.Message} | Inner: {root.GetType().Name}: {root.Message}\n"); } catch {}
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($".NET HttpClient EXCEPTION: {ex.GetType().Name}: {ex.Message} | Inner: {root.GetType().Name}: {root.Message}"); } catch {}
                 return (0, $".NET HttpClient error: {root.GetType().Name}: {root.Message}");
             }
         }
@@ -1246,6 +1332,9 @@ namespace Offensive360.VSExt.Helpers
             var statusFile = Path.GetTempFileName();
             var scriptFile = Path.GetTempFileName() + ".py";
 
+            // KeepInvisibleAndDeletePostScan=True on ExternalScan → server auto-deletes
+            // the project after the scan. Plugin-triggered scans do not persist on the dashboard.
+            var isExternalScan = endpoint.IndexOf("/ExternalScan", StringComparison.OrdinalIgnoreCase) >= 0;
             var scriptContent = $@"
 import sys, json
 try:
@@ -1255,7 +1344,7 @@ try:
         '{endpoint}',
         headers={{'Authorization': 'Bearer {token}'}},
         files={{'FileSource': ('{projectName}.zip', open(r'{zipFilePath}', 'rb'), 'application/zip')}},
-        data={{'Name': '{projectName}', 'ExternalScanSourceType': 'VsExtension'}},
+        data={{'Name': '{projectName}', 'ExternalScanSourceType': 'VsExtension'{(isExternalScan ? ", 'KeepInvisibleAndDeletePostScan': 'True'" : "")}}},
         verify=False, timeout=900
     )
     with open(r'{outputFile}', 'w') as f: f.write(resp.text)
@@ -1317,6 +1406,11 @@ except Exception as e:
             // to the file; we don't read stderr from the pipe.
             var stderrFile = Path.GetTempFileName();
 
+            // ExternalScan path requires the temporary-project flag so the server
+            // auto-deletes the project after the scan (no dashboard traces).
+            var isExternalScan = endpoint.IndexOf("/ExternalScan", StringComparison.OrdinalIgnoreCase) >= 0;
+            var keepFlag = isExternalScan ? "-F \"KeepInvisibleAndDeletePostScan=True\" " : "";
+
             var psi = new ProcessStartInfo
             {
                 FileName = curlPath,
@@ -1329,6 +1423,7 @@ except Exception as e:
                     $"-F \"FileSource=@{zipFilePath};type=application/zip\" " +
                     $"-F \"Name={projectName}\" " +
                     $"-F \"ExternalScanSourceType=VsExtension\" " +
+                    keepFlag +
                     $"-H \"Authorization: Bearer {token}\" " +
                     $"\"{endpoint}\"",
                 UseShellExecute = false,
@@ -1379,8 +1474,7 @@ except Exception as e:
                             // Keep the last ~800 chars so the log isn't flooded
                             if (stderrContent.Length > 800)
                                 stderrContent = "..." + stderrContent.Substring(stderrContent.Length - 800);
-                            File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt",
-                                $"[{DateTime.Now}] curl exit={process.ExitCode} httpCode={httpCode}\ncurl stderr tail:\n{stderrContent}\n");
+                            Offensive360.VSExt.Helpers.O360Logger.Log($"curl exit={process.ExitCode} httpCode={httpCode}\ncurl stderr tail:\n{stderrContent}");
                         }
                         catch { }
                     }
@@ -1586,12 +1680,75 @@ except Exception as e:
             return await FetchLangResultsAsync(projectId);
         }
 
+        /// <summary>
+        /// Looks up an existing dashboard project whose name matches the given solution name.
+        /// Uses /app/api/Project (accessible to External tokens as of 2026-04-08 server update).
+        /// Matching: exact (case-insensitive), then normalized (strip dots/spaces/underscores/hyphens).
+        /// Returns null if no match, or throws on server-side errors (401/403/LICENSE_REQUIRED).
+        /// </summary>
+        private static async Task<string> FindMatchingDashboardProjectAsync(string solutionBaseName)
+        {
+            if (string.IsNullOrWhiteSpace(solutionBaseName)) return null;
+
+            var url = $"{Settings.Default.BaseUrl.TrimEnd('/')}/app/api/Project";
+            using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
+            {
+                client.Timeout = TimeSpan.FromSeconds(15);
+                var req = new HttpRequestMessage { RequestUri = new Uri(url), Method = HttpMethod.Get };
+                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
+
+                var resp = await client.SendAsync(req);
+                var body = await resp.Content.ReadAsStringAsync();
+
+                if (resp.StatusCode == HttpStatusCode.Forbidden || resp.StatusCode == HttpStatusCode.Unauthorized)
+                {
+                    // Propagate so caller can distinguish license-lock vs permission issue
+                    if (!string.IsNullOrEmpty(body) && body.IndexOf("LICENSE_REQUIRED", StringComparison.OrdinalIgnoreCase) >= 0)
+                        throw new HttpRequestException("LICENSE_REQUIRED: " + body);
+                    // Not licensed to read projects — caller will fall back to temp scan
+                    return null;
+                }
+                if (!resp.IsSuccessStatusCode) return null;
+
+                var jo = Newtonsoft.Json.Linq.JToken.Parse(body);
+                var items = jo is Newtonsoft.Json.Linq.JArray arr ? arr : (jo["pageItems"] as Newtonsoft.Json.Linq.JArray) ?? new Newtonsoft.Json.Linq.JArray();
+
+                string Norm(string s) => (s ?? "").ToLowerInvariant()
+                    .Replace(".", "").Replace(" ", "").Replace("_", "").Replace("-", "").Replace("/", "").Replace("\\", "");
+                var target = Norm(solutionBaseName);
+
+                // Pass 1: exact (case-insensitive)
+                foreach (var it in items)
+                {
+                    var name = it.Value<string>("name") ?? "";
+                    if (string.Equals(name, solutionBaseName, StringComparison.OrdinalIgnoreCase))
+                        return it.Value<string>("id");
+                }
+                // Pass 2: normalized match (strip dots/spaces/underscores/hyphens)
+                foreach (var it in items)
+                {
+                    var name = it.Value<string>("name") ?? "";
+                    if (Norm(name) == target)
+                        return it.Value<string>("id");
+                }
+                // Pass 3: contains match (last resort — e.g. solution "WebGoat.NET" matches "WebGoatNET-master")
+                foreach (var it in items)
+                {
+                    var name = it.Value<string>("name") ?? "";
+                    if (!string.IsNullOrEmpty(name) && Norm(name).IndexOf(target, StringComparison.Ordinal) >= 0)
+                        return it.Value<string>("id");
+                }
+                return null;
+            }
+        }
+
         private static async Task<ScanResponse> FetchLangResultsAsync(string projectId)
         {
             var resultsUrl = $"{Settings.Default.BaseUrl.TrimEnd('/')}{projectEndpoint}/{projectId}/LangaugeScanResult";
 
             using (var client = new HttpClient(CreateHandler(), disposeHandler: true))
             {
+                client.Timeout = TimeSpan.FromMinutes(2);
                 var req = new HttpRequestMessage
                 {
                     RequestUri = new Uri(resultsUrl),
@@ -1600,6 +1757,15 @@ except Exception as e:
                 req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Settings.Default.AccessToken);
 
                 var response = await client.SendAsync(req);
+                if (response.StatusCode == HttpStatusCode.Forbidden)
+                {
+                    var bodyForbidden = await response.Content.ReadAsStringAsync();
+                    if (!string.IsNullOrEmpty(bodyForbidden) && bodyForbidden.IndexOf("LICENSE_REQUIRED", StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
+                        throw new HttpRequestException("LICENSE_REQUIRED: " + bodyForbidden);
+                    }
+                    throw new HttpRequestException("Forbidden (External token may not have read access yet)");
+                }
                 response.EnsureSuccessStatusCode();
 
                 var body = await response.Content.ReadAsStringAsync();
@@ -1612,16 +1778,25 @@ except Exception as e:
 
                 var vulnerabilities = array.Select(item => new VulnerabilityResponse
                 {
-                    Title = item.Value<string>("type") ?? "",
+                    // Map ALL fields the dashboard returns. Title prefers "title" then "type".
+                    Title = item.Value<string>("title") ?? item.Value<string>("type") ?? "",
                     LineNumber = $"{item.Value<int>("lineNo")},{item.Value<int>("columnNo")}",
                     RiskLevel = MapRiskLevel(item.Value<int>("riskLevel")),
                     Vulnerability = item.Value<string>("vulnerability") ?? "",
                     FileName = item.Value<string>("fileName") ?? "",
                     FilePath = item.Value<string>("filePath") ?? "",
-                    References = item.Value<string>("references") ?? ""
+                    References = item.Value<string>("references") ?? "",
+                    Recommendation = item.Value<string>("recommendation") ?? "",
+                    CodeSnippet = item.Value<string>("codeSnippet") ?? "",
+                    Effect = item.Value<string>("effect") ?? ""
                 }).ToList();
 
-                return new ScanResponse { Vulnerabilities = vulnerabilities };
+                return new ScanResponse
+                {
+                    Vulnerabilities = vulnerabilities,
+                    TotalVulnerabilities = vulnerabilities.Count,
+                    ProjectId = projectId
+                };
             }
         }
 
