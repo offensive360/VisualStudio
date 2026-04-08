@@ -15,8 +15,11 @@ namespace Offensive360.VSExt
     [System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverage]
     [ProvideMenuResource("Menus.ctmenu", 1)]
     [ProvideOptionPage(typeof(SettingDialogPage), "Offensive360", SettingDialogPage.PageName, 901, 902, false, 903)]
+    [ProvideToolWindow(typeof(Offensive360.VSExt.ToolWindow.FindingsToolWindow), Style = VsDockStyle.Tabbed, Window = EnvDTE.Constants.vsWindowKindOutput)]
     public sealed class Offensive360VSExtPackage : AsyncPackage
     {
+        public static Offensive360VSExtPackage Instance { get; private set; }
+
         private DTE _dte;
 
         private ErrorListProvider _errorListProvider;
@@ -29,6 +32,7 @@ namespace Offensive360.VSExt
 
         protected override async Task InitializeAsync(CancellationToken cancellationToken, IProgress<ServiceProgressData> progress)
         {
+            Instance = this;
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
             _dte = (await GetServiceAsync(typeof(SDTE))) as DTE;

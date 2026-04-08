@@ -1,0 +1,114 @@
+<UserControl x:Class="Offensive360.VSExt.ToolWindow.FindingsToolWindowControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vsui="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Shell.15.0"
+             Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}"
+             Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}">
+    <UserControl.Resources>
+        <SolidColorBrush x:Key="CriticalBrush" Color="#FF3B3B"/>
+        <SolidColorBrush x:Key="HighBrush" Color="#FF8C00"/>
+        <SolidColorBrush x:Key="MediumBrush" Color="#FFD700"/>
+        <SolidColorBrush x:Key="LowBrush" Color="#4FC3F7"/>
+        <Style x:Key="SevCellStyle" TargetType="TextBlock">
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding Severity}" Value="CRITICAL">
+                    <Setter Property="Background" Value="{StaticResource CriticalBrush}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="HIGH">
+                    <Setter Property="Background" Value="{StaticResource HighBrush}"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="MEDIUM">
+                    <Setter Property="Background" Value="{StaticResource MediumBrush}"/>
+                    <Setter Property="Foreground" Value="Black"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding Severity}" Value="LOW">
+                    <Setter Property="Background" Value="{StaticResource LowBrush}"/>
+                    <Setter Property="Foreground" Value="Black"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+    </UserControl.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Toolbar: severity filter + search -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,4">
+            <TextBlock x:Name="HeaderLabel"
+                       VerticalAlignment="Center"
+                       FontWeight="Bold"
+                       Margin="0,0,12,0"
+                       Text="Offensive 360 — 0 findings"/>
+            <CheckBox x:Name="CriticalCheck" Content="Critical" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+            <CheckBox x:Name="HighCheck" Content="High" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+            <CheckBox x:Name="MediumCheck" Content="Medium" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+            <CheckBox x:Name="LowCheck" Content="Low" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+            <TextBlock Text="Search:" VerticalAlignment="Center" Margin="12,0,4,0"/>
+            <TextBox x:Name="SearchBox" Width="200" VerticalAlignment="Center" TextChanged="SearchBox_TextChanged"/>
+        </StackPanel>
+
+        <!-- Findings grid -->
+        <DataGrid x:Name="FindingsGrid"
+                  Grid.Row="1"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  CanUserAddRows="False"
+                  CanUserDeleteRows="False"
+                  SelectionMode="Single"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}"
+                  Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"
+                  RowBackground="Transparent"
+                  AlternatingRowBackground="#11FFFFFF"
+                  MouseDoubleClick="FindingsGrid_MouseDoubleClick"
+                  SelectionChanged="FindingsGrid_SelectionChanged">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="Severity" Width="90" SortMemberPath="SeverityOrder">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Severity}" Style="{StaticResource SevCellStyle}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*"/>
+                <DataGridTextColumn Header="File" Binding="{Binding File}" Width="200"/>
+                <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="60"/>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Detail pane -->
+        <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch"
+                      Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarDragHandleBrushKey}}"/>
+        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" MaxHeight="240" Margin="6,4">
+            <StackPanel>
+                <TextBlock x:Name="DetailTitle" FontWeight="Bold" TextWrapping="Wrap"
+                           Text="Select a finding to see details."/>
+                <TextBlock x:Name="DetailLocation" Opacity="0.7" TextWrapping="Wrap" Margin="0,2,0,6"/>
+                <TextBlock Text="Description" FontWeight="Bold" Margin="0,4,0,0"/>
+                <TextBlock x:Name="DetailDescription" TextWrapping="Wrap"/>
+                <TextBlock Text="Recommendation" FontWeight="Bold" Margin="0,8,0,0"/>
+                <TextBlock x:Name="DetailRecommendation" TextWrapping="Wrap"/>
+                <TextBlock Text="Code" FontWeight="Bold" Margin="0,8,0,0"/>
+                <TextBox x:Name="DetailCode"
+                         IsReadOnly="True"
+                         FontFamily="Consolas"
+                         TextWrapping="NoWrap"
+                         AcceptsReturn="True"
+                         VerticalScrollBarVisibility="Auto"
+                         HorizontalScrollBarVisibility="Auto"
+                         MaxHeight="120"
+                         Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarMenuBackgroundGradientBeginBrushKey}}"/>
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>

@@ -338,6 +338,7 @@ namespace Offensive360.VSExt.Helpers
                 // findings that legitimately shared a location (e.g. SAST + AI engine
                 // finding two different issues on the same line), causing 165/166
                 // count mismatches against the dashboard.
+                var toolWindowRows = new List<Offensive360.VSExt.ToolWindow.FindingRow>();
                 try
                 {
                     int rendered = 0;
@@ -358,9 +359,31 @@ namespace Offensive360.VSExt.Helpers
                             {
                                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Log finding skipped: {logEx.GetType().Name}: {logEx.Message}\n"); } catch {}
                             }
+
+                            // Also append to the dedicated Offensive 360 tool window (NEW in v1.12.9).
+                            // This is the "separate tab" UI — keeps findings from being visually mixed
+                            // with compiler warnings / IntelliSense noise in the generic Error List.
+                            try
+                            {
+                                var absFile = ResolveAbsoluteFilePath(solutionFolder, vulnerability.FilePath, vulnerability.FileName);
+                                toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
+                                {
+                                    Severity = NormalizeRiskLevel(vulnerability.RiskLevel),
+                                    Title = vulnerability.Title ?? "",
+                                    File = vulnerability.FileName ?? System.IO.Path.GetFileName(vulnerability.FilePath ?? ""),
+                                    Line = lineNo,
+                                    Column = columnNo,
+                                    AbsoluteFilePath = absFile,
+                                    Description = vulnerability.Vulnerability ?? "",
+                                    Recommendation = "",
+                                    References = vulnerability.References ?? "",
+                                    CodeSnippet = ""
+                                });
+                            }
+                            catch { /* row-level failure must not break the render */ }
                         }
                     }
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} findings to Error List (no dedup)\n"); } catch {}
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} findings to Error List + {toolWindowRows.Count} to O360 tool window (no dedup)\n"); } catch {}
                 }
                 catch (Exception renderEx)
                 {
@@ -368,9 +391,35 @@ namespace Offensive360.VSExt.Helpers
                     try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Render loop FAILED: {renderEx.GetType().Name}: {renderEx.Message}\n{renderEx.StackTrace}\n"); } catch {}
                 }
 
+                // Push into the dedicated tool window store (UI thread) and open the window.
+                try
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    Offensive360.VSExt.ToolWindow.FindingsStore.Replace(toolWindowRows);
+                    try
+                    {
+                        if (Package.GetGlobalService(typeof(SVsShell)) is IVsShell shell)
+                        {
+                            // Best-effort show of the tool window — uses the already-registered
+                            // ProvideToolWindow attribute. Failure here is non-fatal.
+                            var package = Offensive360.VSExt.Offensive360VSExtPackage.Instance;
+                            if (package != null)
+                            {
+                                var window = package.FindToolWindow(typeof(Offensive360.VSExt.ToolWindow.FindingsToolWindow), 0, true);
+                                if (window?.Frame is IVsWindowFrame frame)
+                                {
+                                    frame.Show();
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                catch { }
+
                 currentFilePath = solutionFilePath;
-                _errorListProvider.Show();  // Force Error List window to open
-                _errorListProvider.ForceShowErrors();  // Ensure errors/warnings/messages are visible
+                _errorListProvider.Show();  // Keep Error List open too for back-compat
+                _errorListProvider.ForceShowErrors();
 
                 // --- Completion summary ---
                 var displayedCount = _errorListProvider.Tasks.Count;
@@ -1402,6 +1451,40 @@ except Exception as e:
         }
 
         private static readonly string[] riskLevelNames = { "SAFE", "LOW", "MEDIUM", "HIGH", "CRITICAL" };
+
+        /// <summary>
+        /// Best-effort resolution of an absolute file path for the tool window's double-click
+        /// navigation. Tries filePath (raw), filePath joined to the solution folder, and a
+        /// recursive search by file name under the solution folder (strips any zip prefix).
+        /// Returns null if nothing matches — the tool window handles null gracefully.
+        /// </summary>
+        private static string ResolveAbsoluteFilePath(string solutionFolder, string filePath, string fileName)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath)) return filePath;
+                if (!string.IsNullOrWhiteSpace(solutionFolder) && !string.IsNullOrWhiteSpace(filePath))
+                {
+                    var joined = Path.Combine(solutionFolder, filePath.TrimStart('\\', '/'));
+                    if (File.Exists(joined)) return joined;
+                    // Strip common zip prefix dirs one level at a time
+                    var parts = filePath.Replace('\\', '/').Split('/');
+                    for (int start = 1; start < parts.Length; start++)
+                    {
+                        var sub = string.Join("\\", parts, start, parts.Length - start);
+                        var candidate = Path.Combine(solutionFolder, sub);
+                        if (File.Exists(candidate)) return candidate;
+                    }
+                }
+                if (!string.IsNullOrWhiteSpace(solutionFolder) && !string.IsNullOrWhiteSpace(fileName))
+                {
+                    var matches = Directory.GetFiles(solutionFolder, fileName, SearchOption.AllDirectories);
+                    if (matches != null && matches.Length > 0) return matches[0];
+                }
+            }
+            catch { }
+            return null;
+        }
 
         private static async Task<ScanResponse> GetScanResultsAsync(string projectId)
         {

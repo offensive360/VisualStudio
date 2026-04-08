@@ -54,6 +54,15 @@
     <Compile Include="Helpers\PluginUpdateChecker.cs" />
     <Compile Include="Helpers\ScanCache.cs" />
     <Compile Include="Helpers\SastHelper.cs" />
+    <Compile Include="ToolWindow\FindingsStore.cs" />
+    <Compile Include="ToolWindow\FindingsToolWindow.cs" />
+    <Compile Include="ToolWindow\FindingsToolWindowControl.xaml.cs">
+      <DependentUpon>FindingsToolWindowControl.xaml</DependentUpon>
+    </Compile>
+    <Page Include="ToolWindow\FindingsToolWindowControl.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
     <Compile Include="Helpers\VulnerabilityKnowledgeBase.cs" />
     <Compile Include="Models\ScanReponse.cs" />
     <Compile Include="Models\VulnerabilityResponse.cs" />
