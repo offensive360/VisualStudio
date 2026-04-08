@@ -160,11 +160,19 @@ namespace Offensive360.VSExt
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Offensive360: Scan error — {ex.GetType().Name}: {ex.Message}");
-                try { System.IO.File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n"); } catch {}
-                _errorListProvider.LogException($"Offensive360 Scan Error: {ex.Message}");
+                // Flatten to the innermost exception so the real cause isn't hidden by outer wrappers
+                var root = ex;
+                while (root.InnerException != null) root = root.InnerException;
+                var detail = $"{root.GetType().Name}: {root.Message}";
+                System.Diagnostics.Debug.WriteLine($"Offensive360: Scan error — {detail}");
+                try { System.IO.File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"\n[{DateTime.Now}] ERROR: {ex.GetType().Name}: {ex.Message}\nInner: {detail}\n{ex.StackTrace}\n"); } catch {}
+                _errorListProvider.LogException($"Offensive360 Scan Error: {detail}");
                 System.Windows.MessageBox.Show(
-                    $"Scan failed: {ex.Message}\n\nCheck your server endpoint URL, access token, and network connection in Tools > Options > Offensive360.",
+                    $"Scan failed: {detail}\n\n" +
+                    "Troubleshooting:\n" +
+                    "• Check server URL and access token in Tools > Options > Offensive360\n" +
+                    "• Verify the server is reachable from this machine\n" +
+                    "• See full log at C:\\Users\\<you>\\Desktop\\o360_scan_log.txt",
                     "Offensive360 SAST - Scan Error",
                     System.Windows.MessageBoxButton.OK,
                     System.Windows.MessageBoxImage.Warning);
