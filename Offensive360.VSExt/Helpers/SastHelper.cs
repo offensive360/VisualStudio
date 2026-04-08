@@ -915,7 +915,7 @@ namespace Offensive360.VSExt.Helpers
 
                     var relativePath = file.Substring(from.FullName.Length).TrimStart('\\', '/');
                     var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                    if (parts.Any(p => ScanCache.ExcludeFolders.Contains(p))) continue;
+                    if (parts.Any(p => ScanCache.IsExcludedFolder(p))) continue;
 
                     try
                     {

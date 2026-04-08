@@ -50,10 +50,14 @@ namespace Offensive360.VSExt.Helpers
             public Dictionary<string, string> CurrentHashes { get; set; } = new Dictionary<string, string>();
         }
 
+        // KEEP IN LOCKSTEP with AS plugin FileCollector.kt EXCLUDE_EXTS.
+        // Any change here MUST be mirrored in the other plugin or the two IDEs
+        // will start producing different finding counts for the same project
+        // (VS v1.12.11 / AS v1.1.9 incident — 106 vs 74 on same WebGoat.NET).
         public static readonly HashSet<string> ExcludeExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             ".zip", ".dll", ".pdf", ".exe", ".DS_Store", ".bak", ".tmp",
             ".mp3", ".mp4", ".wav", ".avi", ".mov", ".wmv", ".flv",
-            ".bmp", ".gif", ".jpg", ".png", ".psd", ".tif", ".ico", ".svg",
+            ".bmp", ".gif", ".jpg", ".jpeg", ".png", ".psd", ".tif", ".tiff", ".ico", ".svg",
             ".jar", ".rar", ".7z", ".gz", ".tar", ".war", ".ear",
             ".pdb", ".class", ".iml", ".nupkg", ".vsix", ".aar",
             ".woff", ".woff2", ".ttf", ".otf", ".eot",
@@ -62,13 +66,44 @@ namespace Offensive360.VSExt.Helpers
             ".suo", ".user", ".cache", ".snk", ".pfx", ".p12"
         };
 
+        // KEEP IN LOCKSTEP with AS plugin FileCollector.kt SKIP_DIRS.
+        // NOTE: backup<N> folders are matched by IsExcludedFolder() pattern below,
+        // not by this literal set, so don't bother adding backup4/5/6/etc here.
         public static readonly HashSet<string> ExcludeFolders = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
             ".vs", "cvs", ".svn", ".hg", ".git", ".bzr", "bin", "obj",
-            "backup", "backup1", "backup2", "backup3", "backups",
             ".idea", ".vscode", "node_modules", "packages",
             "dist", "build", "out", "target", ".gradle", "__pycache__",
-            ".SASTO360", "TestResults", "test-results", ".nuget"
+            ".SASTO360", "TestResults", "test-results", ".nuget",
+            ".node_modules", ".pytest_cache", ".next", "coverage"
         };
+
+        /// <summary>
+        /// Returns true if the given folder name (single path segment, not full path)
+        /// should be skipped during scan. Combines a literal set lookup with a pattern
+        /// match for backup folders so that VS migration's auto-created Backup4/Backup5
+        /// (and any future variant) is automatically excluded without having to update
+        /// the literal list every time.
+        ///
+        /// Pattern: matches "backup", "backups", "backup1", "backup12", etc — any folder
+        /// whose lowercase name is "backup" / "backups" or starts with "backup" followed
+        /// only by digits.
+        /// </summary>
+        public static bool IsExcludedFolder(string segmentName)
+        {
+            if (string.IsNullOrEmpty(segmentName)) return false;
+            if (ExcludeFolders.Contains(segmentName)) return true;
+            var lower = segmentName.ToLowerInvariant();
+            if (lower == "backup" || lower == "backups") return true;
+            if (lower.StartsWith("backup", StringComparison.Ordinal) && lower.Length > 6)
+            {
+                for (int i = 6; i < lower.Length; i++)
+                {
+                    if (lower[i] < '0' || lower[i] > '9') return false;
+                }
+                return true;
+            }
+            return false;
+        }
 
         public static string GetCachePath(string solutionFolder)
         {
@@ -115,7 +150,7 @@ namespace Offensive360.VSExt.Helpers
                 if (ExcludeExts.Contains(ext)) continue;
                 var relativePath = file.Substring(folderPath.Length).TrimStart('\\', '/');
                 var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
-                if (Array.Exists(parts, p => ExcludeFolders.Contains(p))) continue;
+                if (Array.Exists(parts, p => IsExcludedFolder(p))) continue;
 
                 // Skip files larger than 50 MB for hashing
                 try

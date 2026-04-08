@@ -124,11 +124,49 @@ namespace Offensive360.VSExt.ToolWindow
                 }
 
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
-                var win = dte.ItemOperations.OpenFile(path);
-                if (win != null && row.Line > 0)
+
+                // Explicitly request the text view, activate the returned window,
+                // and read Selection from the returned Window's Document — NOT from
+                // dte.ActiveDocument. ActiveDocument may still point to the
+                // previously-active document on the first click because the window
+                // activation hasn't propagated yet (this is the "4-click bug"
+                // reported against v1.12.10/11: first double-click jumped to the
+                // wrong line, second double-click worked).
+                var win = dte.ItemOperations.OpenFile(path, EnvDTE.Constants.vsViewKindCode);
+                if (win == null) return;
+                try { win.Activate(); } catch { }
+
+                if (row.Line <= 0) return;
+
+                // Prefer the Selection from the Window's own Document. Fall back to
+                // ActiveDocument only if the Window didn't expose one.
+                TextSelection selection = null;
+                try
                 {
-                    var sel = dte.ActiveDocument?.Selection as TextSelection;
-                    sel?.GotoLine(row.Line, true);
+                    var winDoc = win.Document;
+                    if (winDoc != null)
+                    {
+                        selection = winDoc.Selection as TextSelection;
+                    }
+                }
+                catch { }
+
+                if (selection == null)
+                {
+                    try { selection = dte.ActiveDocument?.Selection as TextSelection; } catch { }
+                }
+
+                if (selection != null)
+                {
+                    try
+                    {
+                        selection.GotoLine(row.Line, true);
+                        if (row.Column > 0)
+                        {
+                            try { selection.MoveToLineAndOffset(row.Line, row.Column, false); } catch { }
+                        }
+                    }
+                    catch { }
                 }
             }
             catch { /* navigation failure must not crash the tool window */ }
