@@ -9,10 +9,55 @@
         <SolidColorBrush x:Key="HighBrush" Color="#FF8C00"/>
         <SolidColorBrush x:Key="MediumBrush" Color="#FFD700"/>
         <SolidColorBrush x:Key="LowBrush" Color="#4FC3F7"/>
+
+        <!-- Explicit DataGrid column header style so the column names are visible
+             regardless of VS theme (the default template relies on theme brushes
+             that can render invisible in some dark themes). -->
+        <Style x:Key="O360ColumnHeaderStyle" TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="#F1F1F1"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Padding" Value="8,6"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="BorderThickness" Value="0,0,1,1"/>
+            <Setter Property="HorizontalContentAlignment" Value="Left"/>
+        </Style>
+
+        <!-- Row style with hover + selection highlight -->
+        <Style x:Key="O360RowStyle" TargetType="DataGridRow">
+            <Setter Property="Foreground" Value="#F1F1F1"/>
+            <Setter Property="Height" Value="26"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3E3E42"/>
+                </Trigger>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#094771"/>
+                    <Setter Property="Foreground" Value="White"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="O360CellStyle" TargetType="DataGridCell">
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="8,2"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="DataGridCell">
+                        <Border Background="{TemplateBinding Background}" BorderThickness="0" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <Style x:Key="SevCellStyle" TargetType="TextBlock">
             <Setter Property="FontWeight" Value="Bold"/>
-            <Setter Property="Padding" Value="6,2"/>
+            <Setter Property="Padding" Value="8,3"/>
             <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="HorizontalAlignment" Value="Left"/>
+            <Setter Property="MinWidth" Value="70"/>
             <Style.Triggers>
                 <DataTrigger Binding="{Binding Severity}" Value="CRITICAL">
                     <Setter Property="Background" Value="{StaticResource CriticalBrush}"/>
@@ -41,20 +86,36 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Toolbar: severity filter + search -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="6,4">
-            <TextBlock x:Name="HeaderLabel"
-                       VerticalAlignment="Center"
-                       FontWeight="Bold"
-                       Margin="0,0,12,0"
-                       Text="Offensive 360 — 0 findings"/>
-            <CheckBox x:Name="CriticalCheck" Content="Critical" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-            <CheckBox x:Name="HighCheck" Content="High" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-            <CheckBox x:Name="MediumCheck" Content="Medium" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-            <CheckBox x:Name="LowCheck" Content="Low" IsChecked="True" Margin="4,0" VerticalAlignment="Center" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-            <TextBlock Text="Search:" VerticalAlignment="Center" Margin="12,0,4,0"/>
-            <TextBox x:Name="SearchBox" Width="200" VerticalAlignment="Center" TextChanged="SearchBox_TextChanged"/>
-        </StackPanel>
+        <!-- Toolbar: header + severity filters + search -->
+        <Border Grid.Row="0" Background="#2D2D30" Padding="10,8" BorderBrush="#3F3F46" BorderThickness="0,0,0,1">
+            <DockPanel>
+                <TextBlock x:Name="HeaderLabel"
+                           DockPanel.Dock="Left"
+                           VerticalAlignment="Center"
+                           FontWeight="Bold"
+                           FontSize="13"
+                           Foreground="#F1F1F1"
+                           Margin="0,0,18,0"
+                           Text="Offensive 360 — 0 findings"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock Text="Search:" VerticalAlignment="Center" Foreground="#D4D4D4" Margin="0,0,6,0"/>
+                    <TextBox x:Name="SearchBox"
+                             Width="220"
+                             VerticalAlignment="Center"
+                             Background="#1E1E1E"
+                             Foreground="#F1F1F1"
+                             BorderBrush="#3F3F46"
+                             Padding="4,2"
+                             TextChanged="SearchBox_TextChanged"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="CriticalCheck" Content="Critical" IsChecked="True" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="#FF3B3B" FontWeight="Bold" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+                    <CheckBox x:Name="HighCheck" Content="High" IsChecked="True" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="#FF8C00" FontWeight="Bold" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+                    <CheckBox x:Name="MediumCheck" Content="Medium" IsChecked="True" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="#FFD700" FontWeight="Bold" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+                    <CheckBox x:Name="LowCheck" Content="Low" IsChecked="True" Margin="0,0,10,0" VerticalAlignment="Center" Foreground="#4FC3F7" FontWeight="Bold" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
 
         <!-- Findings grid -->
         <DataGrid x:Name="FindingsGrid"
@@ -63,17 +124,25 @@
                   IsReadOnly="True"
                   CanUserAddRows="False"
                   CanUserDeleteRows="False"
+                  CanUserReorderColumns="True"
+                  CanUserResizeColumns="True"
+                  CanUserSortColumns="True"
                   SelectionMode="Single"
                   HeadersVisibility="Column"
-                  GridLinesVisibility="Horizontal"
-                  Background="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowBackgroundBrushKey}}"
-                  Foreground="{DynamicResource {x:Static vsui:EnvironmentColors.ToolWindowTextBrushKey}}"
-                  RowBackground="Transparent"
-                  AlternatingRowBackground="#11FFFFFF"
+                  GridLinesVisibility="None"
+                  Background="#1E1E1E"
+                  Foreground="#F1F1F1"
+                  RowBackground="#1E1E1E"
+                  AlternatingRowBackground="#252526"
+                  BorderBrush="#3F3F46"
+                  BorderThickness="0,1,0,0"
+                  ColumnHeaderStyle="{StaticResource O360ColumnHeaderStyle}"
+                  RowStyle="{StaticResource O360RowStyle}"
+                  CellStyle="{StaticResource O360CellStyle}"
                   MouseDoubleClick="FindingsGrid_MouseDoubleClick"
                   SelectionChanged="FindingsGrid_SelectionChanged">
             <DataGrid.Columns>
-                <DataGridTemplateColumn Header="Severity" Width="90" SortMemberPath="SeverityOrder">
+                <DataGridTemplateColumn Header="Severity" Width="100" SortMemberPath="SeverityOrder">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
                             <TextBlock Text="{Binding Severity}" Style="{StaticResource SevCellStyle}"/>
@@ -81,34 +150,64 @@
                     </DataGridTemplateColumn.CellTemplate>
                 </DataGridTemplateColumn>
                 <DataGridTextColumn Header="Title" Binding="{Binding Title}" Width="*"/>
-                <DataGridTextColumn Header="File" Binding="{Binding File}" Width="200"/>
+                <DataGridTextColumn Header="File" Binding="{Binding File}" Width="220"/>
                 <DataGridTextColumn Header="Line" Binding="{Binding Line}" Width="60"/>
             </DataGrid.Columns>
         </DataGrid>
 
         <!-- Detail pane -->
-        <GridSplitter Grid.Row="2" Height="4" HorizontalAlignment="Stretch"
-                      Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarDragHandleBrushKey}}"/>
-        <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto" MaxHeight="240" Margin="6,4">
-            <StackPanel>
-                <TextBlock x:Name="DetailTitle" FontWeight="Bold" TextWrapping="Wrap"
-                           Text="Select a finding to see details."/>
-                <TextBlock x:Name="DetailLocation" Opacity="0.7" TextWrapping="Wrap" Margin="0,2,0,6"/>
-                <TextBlock Text="Description" FontWeight="Bold" Margin="0,4,0,0"/>
-                <TextBlock x:Name="DetailDescription" TextWrapping="Wrap"/>
-                <TextBlock Text="Recommendation" FontWeight="Bold" Margin="0,8,0,0"/>
-                <TextBlock x:Name="DetailRecommendation" TextWrapping="Wrap"/>
-                <TextBlock Text="Code" FontWeight="Bold" Margin="0,8,0,0"/>
-                <TextBox x:Name="DetailCode"
-                         IsReadOnly="True"
-                         FontFamily="Consolas"
-                         TextWrapping="NoWrap"
-                         AcceptsReturn="True"
-                         VerticalScrollBarVisibility="Auto"
-                         HorizontalScrollBarVisibility="Auto"
-                         MaxHeight="120"
-                         Background="{DynamicResource {x:Static vsui:EnvironmentColors.CommandBarMenuBackgroundGradientBeginBrushKey}}"/>
-            </StackPanel>
-        </ScrollViewer>
+        <GridSplitter Grid.Row="2" Height="5" HorizontalAlignment="Stretch" Background="#3F3F46" ShowsPreview="True"/>
+        <Border Grid.Row="3" Background="#252526" BorderBrush="#3F3F46" BorderThickness="0,1,0,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="260">
+                <StackPanel Margin="12,10">
+                    <TextBlock x:Name="DetailTitle"
+                               FontWeight="Bold"
+                               FontSize="14"
+                               Foreground="#F1F1F1"
+                               TextWrapping="Wrap"
+                               Text="Select a finding to see details."/>
+                    <TextBlock x:Name="DetailLocation"
+                               FontFamily="Consolas"
+                               Foreground="#9CDCFE"
+                               TextWrapping="Wrap"
+                               Margin="0,3,0,10"/>
+
+                    <TextBlock Text="Description"
+                               FontWeight="Bold"
+                               Foreground="#C586C0"
+                               Margin="0,4,0,2"/>
+                    <TextBlock x:Name="DetailDescription"
+                               Foreground="#D4D4D4"
+                               TextWrapping="Wrap"/>
+
+                    <TextBlock Text="Recommendation"
+                               FontWeight="Bold"
+                               Foreground="#C586C0"
+                               Margin="0,10,0,2"/>
+                    <TextBlock x:Name="DetailRecommendation"
+                               Foreground="#D4D4D4"
+                               TextWrapping="Wrap"/>
+
+                    <TextBlock Text="Code"
+                               FontWeight="Bold"
+                               Foreground="#C586C0"
+                               Margin="0,10,0,2"/>
+                    <Border Background="#1E1E1E" BorderBrush="#3F3F46" BorderThickness="1" Padding="6">
+                        <TextBox x:Name="DetailCode"
+                                 IsReadOnly="True"
+                                 FontFamily="Consolas"
+                                 FontSize="12"
+                                 Background="Transparent"
+                                 Foreground="#DCDCAA"
+                                 BorderThickness="0"
+                                 TextWrapping="NoWrap"
+                                 AcceptsReturn="True"
+                                 VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto"
+                                 MaxHeight="120"/>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
     </Grid>
 </UserControl>

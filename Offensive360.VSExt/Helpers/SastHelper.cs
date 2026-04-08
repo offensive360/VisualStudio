@@ -366,6 +366,9 @@ namespace Offensive360.VSExt.Helpers
                             try
                             {
                                 var absFile = ResolveAbsoluteFilePath(solutionFolder, vulnerability.FilePath, vulnerability.FileName);
+                                var description = vulnerability.Vulnerability ?? "";
+                                if (!string.IsNullOrWhiteSpace(vulnerability.Effect))
+                                    description += "\n\nImpact: " + vulnerability.Effect;
                                 toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
                                 {
                                     Severity = NormalizeRiskLevel(vulnerability.RiskLevel),
@@ -374,10 +377,10 @@ namespace Offensive360.VSExt.Helpers
                                     Line = lineNo,
                                     Column = columnNo,
                                     AbsoluteFilePath = absFile,
-                                    Description = vulnerability.Vulnerability ?? "",
-                                    Recommendation = "",
+                                    Description = description,
+                                    Recommendation = vulnerability.Recommendation ?? "",
                                     References = vulnerability.References ?? "",
-                                    CodeSnippet = ""
+                                    CodeSnippet = TryDecodeBase64CodeSnippet(vulnerability.CodeSnippet)
                                 });
                             }
                             catch { /* row-level failure must not break the render */ }
@@ -1451,6 +1454,34 @@ except Exception as e:
         }
 
         private static readonly string[] riskLevelNames = { "SAFE", "LOW", "MEDIUM", "HIGH", "CRITICAL" };
+
+        /// <summary>
+        /// Decodes a base64-encoded code snippet if the server returned one.
+        /// The AI engine sometimes returns code snippets base64-encoded; heuristic-detect
+        /// and decode. Returns the input unchanged if it's clearly plain text.
+        /// </summary>
+        private static string TryDecodeBase64CodeSnippet(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+            // Plain code almost always contains a space, paren, quote, or semicolon
+            if (value.IndexOf(' ') >= 0 || value.IndexOf('(') >= 0 || value.IndexOf('"') >= 0 || (value.IndexOf('=') >= 0 && value.IndexOf(';') >= 0))
+                return value;
+            try
+            {
+                var bytes = Convert.FromBase64String(value.Trim());
+                var decoded = System.Text.Encoding.UTF8.GetString(bytes);
+                // Verify decoded looks like printable text
+                foreach (var c in decoded)
+                {
+                    if (c < 9 || (c > 13 && c < 32) || c > 126) return value; // keep original
+                }
+                return decoded;
+            }
+            catch
+            {
+                return value;
+            }
+        }
 
         /// <summary>
         /// Best-effort resolution of an absolute file path for the tool window's double-click
