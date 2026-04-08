@@ -15,7 +15,7 @@ namespace Offensive360.VSExt.Helpers
         private const string CacheFile = "lastScanResults.json";
         // Bump this whenever the cache schema changes. On load, if the version marker is
         // missing or different, the existing cache is wiped (clean install upgrade).
-        private const string CacheSchemaVersion = "v2-2026-04-07";
+        private const string CacheSchemaVersion = "v3-2026-04-08";
         private const string SchemaMarkerFile = "schema.version";
 
         public class CachedScan
@@ -31,6 +31,12 @@ namespace Offensive360.VSExt.Helpers
             // AS plugin writes "findings"; we accept both keys on read for backward compat.
             [JsonProperty("findings")]
             public List<SAST.VSExt.Models.VulnerabilityResponse> Vulnerabilities { get; set; } = new List<SAST.VSExt.Models.VulnerabilityResponse>();
+
+            // Server-reported canonical count, persisted so we can detect cache tampering
+            // or write-time corruption. On load, if TotalVulnerabilities != Vulnerabilities.Count
+            // the cache is discarded and a fresh scan is forced. (2026-04-08 incident.)
+            [JsonProperty("totalVulnerabilities")]
+            public int? TotalVulnerabilities { get; set; }
         }
 
         /// <summary>
@@ -212,7 +218,7 @@ namespace Offensive360.VSExt.Helpers
             return p.Replace("\\", "/").TrimStart('/').ToLowerInvariant();
         }
 
-        public static void Save(string solutionFolder, List<SAST.VSExt.Models.VulnerabilityResponse> vulnerabilities, Dictionary<string, string> fileHashes)
+        public static void Save(string solutionFolder, List<SAST.VSExt.Models.VulnerabilityResponse> vulnerabilities, Dictionary<string, string> fileHashes, int? serverTotal = null)
         {
             try
             {
@@ -220,7 +226,8 @@ namespace Offensive360.VSExt.Helpers
                 {
                     Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                     FileHashes = fileHashes,
-                    Vulnerabilities = vulnerabilities
+                    Vulnerabilities = vulnerabilities,
+                    TotalVulnerabilities = serverTotal ?? vulnerabilities?.Count
                 };
                 var json = JsonConvert.SerializeObject(cached, Formatting.Indented);
                 File.WriteAllText(GetCachePath(solutionFolder), json);
@@ -260,7 +267,23 @@ namespace Offensive360.VSExt.Helpers
                 var path = GetCachePath(solutionFolder);
                 if (!File.Exists(path)) return null;
                 var json = File.ReadAllText(path);
-                return JsonConvert.DeserializeObject<CachedScan>(json);
+                var cached = JsonConvert.DeserializeObject<CachedScan>(json);
+                if (cached == null) return null;
+
+                // Integrity check: if we have a server-reported total, it MUST match the
+                // cached array length. Any drift = stale/corrupted cache → force rescan.
+                // (2026-04-08: safeguard against client-side dedup or write-time corruption
+                // ever silently dropping findings again.)
+                if (cached.TotalVulnerabilities.HasValue &&
+                    cached.Vulnerabilities != null &&
+                    cached.TotalVulnerabilities.Value != cached.Vulnerabilities.Count)
+                {
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Cache integrity check FAILED: stored total={cached.TotalVulnerabilities.Value} but array has {cached.Vulnerabilities.Count} items — discarding cache, will rescan\n"); } catch {}
+                    try { File.Delete(path); } catch { }
+                    return null;
+                }
+
+                return cached;
             }
             catch { return null; }
         }

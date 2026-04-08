@@ -265,17 +265,22 @@ namespace Offensive360.VSExt.Helpers
                     try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] ExternalScan HTTP {extHttpCode}, body length={extBody?.Length ?? 0}\n"); } catch {}
                     scanResponse = JsonConvert.DeserializeObject<ScanResponse>(extBody);
                     var vulnCount = scanResponse?.Vulnerabilities?.Count() ?? 0;
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Deserialized: {vulnCount} vulnerabilities\n"); } catch {}
+                    var serverTotal = scanResponse?.TotalVulnerabilities;
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Deserialized: array={vulnCount}, totalVulnerabilities={(serverTotal?.ToString() ?? "(not present)")}\n"); } catch {}
+                    if (serverTotal.HasValue && serverTotal.Value != vulnCount)
+                    {
+                        // Should never happen with the 2026-04-08 backend update, but log loudly if it does
+                        try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] WARN: server reported totalVulnerabilities={serverTotal.Value} but array has {vulnCount} items — using server total as canonical\n"); } catch {}
+                    }
                     if (scanResponse?.Vulnerabilities == null)
                     {
                         scanResponse = new ScanResponse { Vulnerabilities = new List<VulnerabilityResponse>() };
                     }
 
-                    // Match the dashboard's view: after scan, query the canonical
-                    // /LangaugeScanResult endpoint that the dashboard UI reads from.
-                    // If the server returns findings there, use those instead of the
-                    // raw ExternalScan inline array — the dashboard may filter/dedup
-                    // findings further than ExternalScan's immediate response shows.
+                    // Extract projectId for server cleanup. As of the 2026-04-08 backend
+                    // update, the ExternalScan inline response is the canonical source
+                    // (totalVulnerabilities == vulnerabilities.length == dashboard count),
+                    // so we no longer re-query /LangaugeScanResult.
                     string dashboardProjectId = null;
                     try
                     {
@@ -286,27 +291,7 @@ namespace Offensive360.VSExt.Helpers
 
                     if (!string.IsNullOrEmpty(dashboardProjectId))
                     {
-                        try
-                        {
-                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Fetching dashboard-canonical findings for projectId={dashboardProjectId}...\n"); } catch {}
-                            var canonical = await FetchLangResultsAsync(dashboardProjectId);
-                            var canonicalCount = canonical?.Vulnerabilities?.Count() ?? 0;
-                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] Dashboard-canonical returned {canonicalCount} vulnerabilities\n"); } catch {}
-                            if (canonical?.Vulnerabilities != null)
-                            {
-                                // Always trust the dashboard view, even if it's smaller — the
-                                // user explicitly wants plugin findings to match the dashboard.
-                                scanResponse = canonical;
-                            }
-                        }
-                        catch (Exception langEx)
-                        {
-                            // Fallback: dashboard endpoint unavailable (403/404/etc.) — keep the
-                            // inline ExternalScan findings. Logged for diagnostic purposes.
-                            try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] LangaugeScanResult unavailable ({langEx.GetType().Name}: {langEx.Message}) — falling back to inline ExternalScan results\n"); } catch {}
-                        }
-
-                        // Clean up server-side project (best-effort)
+                        // Best-effort server-side project cleanup (no-op on failure)
                         try { await DeleteProjectAsync(dashboardProjectId); } catch { }
                     }
                 }
@@ -323,11 +308,11 @@ namespace Offensive360.VSExt.Helpers
                 var finalVulnerabilities = scanResponse.Vulnerabilities?.ToList() ?? new List<VulnerabilityResponse>();
                 try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] finalVulnerabilities.Count={finalVulnerabilities.Count}\n"); } catch {}
 
-                // Save merged results + current hashes to cache (non-fatal)
+                // Save merged results + current hashes + server's canonical total to cache (non-fatal)
                 try
                 {
-                    ScanCache.Save(solutionFolder, finalVulnerabilities, diff.CurrentHashes);
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] ScanCache.Save OK\n"); } catch {}
+                    ScanCache.Save(solutionFolder, finalVulnerabilities, diff.CurrentHashes, scanResponse?.TotalVulnerabilities);
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] ScanCache.Save OK (serverTotal={(scanResponse?.TotalVulnerabilities?.ToString() ?? "n/a")})\n"); } catch {}
                 }
                 catch (Exception cacheEx)
                 {
@@ -345,24 +330,26 @@ namespace Offensive360.VSExt.Helpers
                     ignoredVulnerabilities = new string[0];
                 }
 
-                // Deduplicate: same title+file+line may appear from merge or server
+                // Render every finding the server returned — NO client-side dedup.
+                // The server is the source of truth for the dashboard count, and as of
+                // the 2026-04-08 IDECO backend update the response includes a
+                // totalVulnerabilities field whose value equals vulnerabilities.Count.
+                // Previous versions did file+line dedup which silently dropped real
+                // findings that legitimately shared a location (e.g. SAST + AI engine
+                // finding two different issues on the same line), causing 165/166
+                // count mismatches against the dashboard.
                 try
                 {
-                    var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     int rendered = 0;
                     foreach (var vulnerability in finalVulnerabilities)
                     {
-                        // Skip results with no description AND no valid file path — these are
-                        // incomplete "AI engine" findings that the server returned without content
+                        // Drop only results with NO information at all — these are empty
+                        // placeholders the AI engine sometimes returns. Never drop real findings.
                         bool hasDescription = !string.IsNullOrWhiteSpace(vulnerability.Vulnerability);
                         bool hasFile = !string.IsNullOrWhiteSpace(vulnerability.FilePath);
                         if (!hasDescription && !hasFile) continue;
 
                         var (lineNo, columnNo) = PopulateLineAndColumnNumber(vulnerability.LineNumber);
-
-                        // Deduplication by file+line (same location = same finding even if different title)
-                        var dedupeKey = $"{vulnerability.FilePath?.ToLower()}|{lineNo}";
-                        if (!seen.Add(dedupeKey)) continue;
 
                         if (!ignoredVulnerabilities.Contains(VulnerabilityIgnoreConfig(vulnerability.FilePath?.ToLower(), lineNo, columnNo, vulnerability.Title)))
                         {
@@ -373,7 +360,7 @@ namespace Offensive360.VSExt.Helpers
                             }
                         }
                     }
-                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} findings to Error List\n"); } catch {}
+                    try { File.AppendAllText(@"C:\Users\Administrator\Desktop\o360_scan_log.txt", $"[{DateTime.Now}] [Step 5] Rendered {rendered} findings to Error List (no dedup)\n"); } catch {}
                 }
                 catch (Exception renderEx)
                 {
