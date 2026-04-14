@@ -1,0 +1,270 @@
+<Window x:Class="Offensive360.VSExt.FixGuidanceDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Offensive360 — Vulnerability Details"
+        Width="780" Height="660"
+        MinWidth="550" MinHeight="450"
+        WindowStartupLocation="CenterScreen"
+        Background="#FF1E1E1E"
+        Foreground="#FFD4D4D4"
+        ResizeMode="CanResizeWithGrip">
+
+    <Window.Resources>
+        <!-- Colors -->
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF569CD6"/>
+        <SolidColorBrush x:Key="PanelBg" Color="#FF252526"/>
+        <SolidColorBrush x:Key="BorderBrush" Color="#FF3E3E3E"/>
+        <SolidColorBrush x:Key="CodeBg" Color="#FF1B1B1B"/>
+        <SolidColorBrush x:Key="FgBrush" Color="#FFD4D4D4"/>
+        <SolidColorBrush x:Key="FgDimBrush" Color="#FF808080"/>
+        <SolidColorBrush x:Key="FixBoxBg" Color="#FF1A2A3A"/>
+        <SolidColorBrush x:Key="FixBoxBorder" Color="#FF569CD6"/>
+        <SolidColorBrush x:Key="BadCodeFg" Color="#FFF44747"/>
+        <SolidColorBrush x:Key="GoodCodeFg" Color="#FF4EC9B0"/>
+
+        <!-- Tab button style -->
+        <Style x:Key="TabBtn" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Foreground" Value="#FF808080"/>
+            <Setter Property="BorderThickness" Value="0,0,0,2"/>
+            <Setter Property="BorderBrush" Value="Transparent"/>
+            <Setter Property="Padding" Value="16,8"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF2D2D2D"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Active tab style -->
+        <Style x:Key="TabBtnActive" TargetType="Button" BasedOn="{StaticResource TabBtn}">
+            <Setter Property="Foreground" Value="#FFD4D4D4"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+        </Style>
+
+        <!-- Section header -->
+        <Style x:Key="SectionHeader" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="Margin" Value="0,16,0,6"/>
+        </Style>
+
+        <!-- Body text -->
+        <Style x:Key="BodyText" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{StaticResource FgBrush}"/>
+            <Setter Property="FontSize" Value="12.5"/>
+            <Setter Property="TextWrapping" Value="Wrap"/>
+            <Setter Property="LineHeight" Value="20"/>
+        </Style>
+
+        <!-- Code block border -->
+        <Style x:Key="CodeBlock" TargetType="Border">
+            <Setter Property="Background" Value="{StaticResource CodeBg}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="12,10"/>
+            <Setter Property="Margin" Value="0,4,0,4"/>
+        </Style>
+
+        <!-- Copy button style -->
+        <Style x:Key="CopyBtn" TargetType="Button">
+            <Setter Property="Background" Value="#FF333333"/>
+            <Setter Property="Foreground" Value="#FFB0B0B0"/>
+            <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="10,4"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="HorizontalAlignment" Value="Right"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF444444"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Close button style -->
+        <Style x:Key="CloseBtn" TargetType="Button">
+            <Setter Property="Background" Value="#FF0E639C"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Padding" Value="20,6"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                CornerRadius="3"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#FF1177BB"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="24,20">
+                <!-- Header: Severity Badge + Title -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                    <Border x:Name="SeverityBadge" CornerRadius="12" Padding="10,3" VerticalAlignment="Center">
+                        <TextBlock x:Name="SeverityText" FontSize="11" FontWeight="Bold" Foreground="White"/>
+                    </Border>
+                    <TextBlock x:Name="TitleText" FontSize="18" FontWeight="Bold" TextWrapping="Wrap"
+                               VerticalAlignment="Center" Margin="10,0,0,0"/>
+                </StackPanel>
+
+                <!-- Metadata grid -->
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Type" FontWeight="SemiBold" Foreground="{StaticResource FgDimBrush}" Margin="0,2,12,2"/>
+                    <TextBlock Grid.Row="0" Grid.Column="1" x:Name="MetaType" Foreground="{StaticResource FgBrush}" Margin="0,2,20,2"/>
+                    <TextBlock Grid.Row="0" Grid.Column="2" Text="Severity" FontWeight="SemiBold" Foreground="{StaticResource FgDimBrush}" Margin="0,2,12,2"/>
+                    <TextBlock Grid.Row="0" Grid.Column="3" x:Name="MetaSeverity" Foreground="{StaticResource FgBrush}" Margin="0,2,0,2"/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="File" FontWeight="SemiBold" Foreground="{StaticResource FgDimBrush}" Margin="0,2,12,2"/>
+                    <TextBlock Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="3" x:Name="MetaFile" Foreground="{StaticResource FgBrush}" TextWrapping="Wrap" Margin="0,2,0,2"/>
+                </Grid>
+
+                <!-- Tab bar -->
+                <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,2" Margin="0,0,0,0">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="TabDetails" Content="Vulnerability Details" Style="{StaticResource TabBtnActive}" Click="Tab_Click"/>
+                        <Button x:Name="TabFix" Content="How to Fix" Style="{StaticResource TabBtn}" Click="Tab_Click"/>
+                        <Button x:Name="TabRefs" Content="References" Style="{StaticResource TabBtn}" Click="Tab_Click"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- TAB 1: Vulnerability Details -->
+                <StackPanel x:Name="PanelDetails" Margin="0,4,0,0">
+                    <TextBlock Text="Description" Style="{StaticResource SectionHeader}"/>
+                    <TextBlock x:Name="DescriptionText" Style="{StaticResource BodyText}"/>
+
+                    <TextBlock Text="Impact" Style="{StaticResource SectionHeader}" x:Name="ImpactLabel"/>
+                    <TextBlock x:Name="ImpactText" Style="{StaticResource BodyText}"/>
+
+                    <TextBlock Text="Affected Code" Style="{StaticResource SectionHeader}" x:Name="AffectedCodeLabel"/>
+                    <Border Style="{StaticResource CodeBlock}" x:Name="AffectedCodeBlock">
+                        <TextBlock x:Name="AffectedCodeText" FontFamily="Consolas, Courier New" FontSize="12"
+                                   Foreground="{StaticResource FgBrush}" TextWrapping="Wrap"/>
+                    </Border>
+                </StackPanel>
+
+                <!-- TAB 2: How to Fix -->
+                <StackPanel x:Name="PanelFix" Visibility="Collapsed" Margin="0,4,0,0">
+                    <TextBlock Text="Recommended Fix" Style="{StaticResource SectionHeader}"/>
+                    <!-- Fix box (highlighted) -->
+                    <Border Background="{StaticResource FixBoxBg}" BorderBrush="{StaticResource FixBoxBorder}"
+                            BorderThickness="4,0,0,0" CornerRadius="0,4,4,0" Padding="14,10" Margin="0,4,0,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+                            <TextBlock x:Name="FixRecommendationText" Grid.Row="0" Style="{StaticResource BodyText}" Margin="0,0,0,6"/>
+                            <Button x:Name="CopyFixBtn" Grid.Row="1" Content="Copy Fix Guidance" Style="{StaticResource CopyBtn}" Click="CopyFix_Click"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Vulnerable code -->
+                    <TextBlock Style="{StaticResource SectionHeader}" x:Name="VulnCodeLabel">
+                        <Run Text="Vulnerable Code" Foreground="#FFCE9178"/>
+                        <Run Text=" (Bad)" Foreground="{StaticResource BadCodeFg}"/>
+                    </TextBlock>
+                    <Grid x:Name="VulnCodeGrid">
+                        <Border Style="{StaticResource CodeBlock}">
+                            <TextBlock x:Name="VulnCodeText" FontFamily="Consolas, Courier New" FontSize="12"
+                                       Foreground="{StaticResource BadCodeFg}" TextWrapping="Wrap"/>
+                        </Border>
+                        <Button Content="Copy" Style="{StaticResource CopyBtn}" VerticalAlignment="Top"
+                                Margin="0,8,8,0" Click="CopyVulnCode_Click"/>
+                    </Grid>
+
+                    <!-- Secure code -->
+                    <TextBlock Style="{StaticResource SectionHeader}" x:Name="SecureCodeLabel">
+                        <Run Text="Secure Code" Foreground="#FFCE9178"/>
+                        <Run Text=" (Good)" Foreground="{StaticResource GoodCodeFg}"/>
+                    </TextBlock>
+                    <Grid x:Name="SecureCodeGrid">
+                        <Border Style="{StaticResource CodeBlock}">
+                            <TextBlock x:Name="SecureCodeText" FontFamily="Consolas, Courier New" FontSize="12"
+                                       Foreground="{StaticResource GoodCodeFg}" TextWrapping="Wrap"/>
+                        </Border>
+                        <Button Content="Copy" Style="{StaticResource CopyBtn}" VerticalAlignment="Top"
+                                Margin="0,8,8,0" Click="CopySecureCode_Click"/>
+                    </Grid>
+                </StackPanel>
+
+                <!-- TAB 3: References -->
+                <StackPanel x:Name="PanelRefs" Visibility="Collapsed" Margin="0,4,0,0">
+                    <TextBlock Text="References" Style="{StaticResource SectionHeader}"/>
+                    <StackPanel x:Name="RefsContainer"/>
+                    <TextBlock x:Name="NoRefsText" Text="No references available." Style="{StaticResource BodyText}"
+                               Visibility="Collapsed"/>
+                </StackPanel>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Bottom bar -->
+        <Border Grid.Row="1" Background="{StaticResource PanelBg}" BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,1,0,0" Padding="20,10">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="Offensive360 SAST — Offline Knowledge Base"
+                           Foreground="{StaticResource FgDimBrush}" FontSize="11" VerticalAlignment="Center"/>
+                <Button Content="Close" Style="{StaticResource CloseBtn}" HorizontalAlignment="Right" Click="CloseButton_Click"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

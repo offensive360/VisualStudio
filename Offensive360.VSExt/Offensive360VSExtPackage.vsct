@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommandTable xmlns="http://schemas.microsoft.com/VisualStudio/2005-10-18/CommandTable" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+  <Extern href="stdidcmd.h"/>
+  <Extern href="vsshlids.h"/>
+
+  <Commands package="guidOffensive360VSExtPackage">
+    <Groups>
+      <!-- Build menu group -->
+      <Group guid="guidO360CmdSet" id="BuildMenuGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_MENU_BUILD"/>
+      </Group>
+      <!-- Error List context menu -->
+      <Group guid="guidPackageCmdSet" id="ErrorListGroup" priority="0x0500">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_ERRORLIST"/>
+      </Group>
+      <!-- Solution Explorer context menus -->
+      <Group guid="guidO360CmdSet" id="SolExpGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_SOLNNODE"/>
+      </Group>
+      <Group guid="guidO360CmdSet" id="ProjExpGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_PROJNODE"/>
+      </Group>
+      <Group guid="guidO360CmdSet" id="ItemExpGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_ITEMNODE"/>
+      </Group>
+      <!-- Editor context menu -->
+      <Group guid="guidO360CmdSet" id="EditorGroup" priority="0x0600">
+        <Parent guid="guidSHLMainMenu" id="IDM_VS_CTXT_CODEWIN"/>
+      </Group>
+    </Groups>
+
+    <Buttons>
+      <!-- Scan Solution (Build menu + Solution Explorer solution node) -->
+      <Button guid="guidO360CmdSet" id="cmdScanSolution" priority="0x0100" type="Button">
+        <Parent guid="guidO360CmdSet" id="BuildMenuGroup" />
+        <Icon guid="guidImages" id="bmpPic1" />
+        <Strings>
+          <ButtonText>Offensive 360: Scan Solution</ButtonText>
+        </Strings>
+      </Button>
+
+      <!-- Scan Project (Build menu + Solution Explorer project node) -->
+      <Button guid="guidO360CmdSet" id="cmdScanProject" priority="0x0200" type="Button">
+        <Parent guid="guidO360CmdSet" id="BuildMenuGroup" />
+        <Icon guid="guidImages" id="bmpPic1" />
+        <Strings>
+          <ButtonText>Offensive 360: Scan Project</ButtonText>
+        </Strings>
+      </Button>
+
+      <!-- Scan File (Build menu + Solution Explorer file node + Editor) -->
+      <Button guid="guidO360CmdSet" id="cmdScanFile" priority="0x0300" type="Button">
+        <Parent guid="guidO360CmdSet" id="BuildMenuGroup" />
+        <Icon guid="guidImages" id="bmpPic1" />
+        <Strings>
+          <ButtonText>Offensive 360: Scan File</ButtonText>
+        </Strings>
+      </Button>
+
+      <!-- Error List context menu buttons -->
+      <Button guid="guidPackageCmdSet" id="GetHelpCommandId" priority="0x0200" type="Button">
+        <Parent guid="guidPackageCmdSet" id="ErrorListGroup"/>
+        <Icon guid="guidImages" id="bmpPic1" />
+        <Strings>
+          <ButtonText>Offensive 360: View Fix</ButtonText>
+        </Strings>
+      </Button>
+      <Button guid="guidPackageCmdSet" id="ClearAllErrorsCommandId" priority="0x0300" type="Button">
+        <Parent guid="guidPackageCmdSet" id="ErrorListGroup"/>
+        <Strings>
+          <ButtonText>Offensive 360: Clear All</ButtonText>
+        </Strings>
+      </Button>
+      <Button guid="guidPackageCmdSet" id="SuppressCommandId" priority="0x0400" type="Button">
+        <Parent guid="guidPackageCmdSet" id="ErrorListGroup"/>
+        <Strings>
+          <ButtonText>Offensive 360: Suppress</ButtonText>
+        </Strings>
+      </Button>
+    </Buttons>
+
+    <Bitmaps>
+      <Bitmap guid="guidImages" href="Resources\logo.png" usedList="bmpPic1, bmpPic2, bmpPicSearch, bmpPicX, bmpPicArrows, bmpPicStrikethrough"/>
+    </Bitmaps>
+  </Commands>
+
+  <!-- Place scan buttons in context menus too -->
+  <CommandPlacements>
+    <!-- Solution node right-click -->
+    <CommandPlacement guid="guidO360CmdSet" id="cmdScanSolution" priority="0x0100">
+      <Parent guid="guidO360CmdSet" id="SolExpGroup"/>
+    </CommandPlacement>
+    <!-- Project node right-click -->
+    <CommandPlacement guid="guidO360CmdSet" id="cmdScanProject" priority="0x0100">
+      <Parent guid="guidO360CmdSet" id="ProjExpGroup"/>
+    </CommandPlacement>
+    <!-- Also offer Scan Solution from project node -->
+    <CommandPlacement guid="guidO360CmdSet" id="cmdScanSolution" priority="0x0200">
+      <Parent guid="guidO360CmdSet" id="ProjExpGroup"/>
+    </CommandPlacement>
+    <!-- File node right-click -->
+    <CommandPlacement guid="guidO360CmdSet" id="cmdScanFile" priority="0x0100">
+      <Parent guid="guidO360CmdSet" id="ItemExpGroup"/>
+    </CommandPlacement>
+    <!-- Editor right-click -->
+    <CommandPlacement guid="guidO360CmdSet" id="cmdScanFile" priority="0x0100">
+      <Parent guid="guidO360CmdSet" id="EditorGroup"/>
+    </CommandPlacement>
+  </CommandPlacements>
+
+  <Symbols>
+    <GuidSymbol name="guidOffensive360VSExtPackage" value="{6d8478e8-93eb-45cd-901f-7f0e9c636772}" />
+
+    <GuidSymbol name="guidO360CmdSet" value="{37c394e5-ec3b-4e7f-9d98-25a7662c2bcd}">
+      <IDSymbol name="BuildMenuGroup" value="0x1020" />
+      <IDSymbol name="SolExpGroup" value="0x1030" />
+      <IDSymbol name="ProjExpGroup" value="0x1040" />
+      <IDSymbol name="ItemExpGroup" value="0x1050" />
+      <IDSymbol name="EditorGroup" value="0x1060" />
+      <IDSymbol name="cmdScanSolution" value="0x0100" />
+      <IDSymbol name="cmdScanProject" value="0x0101" />
+      <IDSymbol name="cmdScanFile" value="0x0102" />
+    </GuidSymbol>
+
+    <GuidSymbol name="guidPackageCmdSet" value="{762f92d8-926a-4160-8519-badb7cc9a872}">
+      <IDSymbol name="ErrorListGroup" value="0x1000" />
+      <IDSymbol name="GetHelpCommandId" value="0x0200" />
+      <IDSymbol name="ClearAllErrorsCommandId" value="0x0300" />
+      <IDSymbol name="SuppressCommandId" value="0x0400" />
+    </GuidSymbol>
+
+    <GuidSymbol name="guidImages" value="{05d167c0-c08a-4751-8e5d-16fb766806b6}" >
+      <IDSymbol name="bmpPic1" value="1" />
+      <IDSymbol name="bmpPic2" value="2" />
+      <IDSymbol name="bmpPicSearch" value="3" />
+      <IDSymbol name="bmpPicX" value="4" />
+      <IDSymbol name="bmpPicArrows" value="5" />
+      <IDSymbol name="bmpPicStrikethrough" value="6" />
+    </GuidSymbol>
+  </Symbols>
+</CommandTable>

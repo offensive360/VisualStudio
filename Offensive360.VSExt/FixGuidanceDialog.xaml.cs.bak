@@ -1,0 +1,76 @@
+using System;
+using System.Windows;
+using System.Windows.Media;
+using Offensive360.VSExt.Helpers;
+
+namespace Offensive360.VSExt
+{
+    public partial class FixGuidanceDialog : Window
+    {
+        public FixGuidanceDialog(VulnerabilityKnowledgeBase.VulnKBEntry entry)
+        {
+            InitializeComponent();
+
+            if (entry == null)
+                throw new ArgumentNullException(nameof(entry));
+
+            PopulateContent(entry);
+        }
+
+        private void PopulateContent(VulnerabilityKnowledgeBase.VulnKBEntry entry)
+        {
+            // Title
+            TitleText.Text = entry.Title;
+
+            // Determine severity from the risk explanation and set colors
+            var riskLower = (entry.RiskExplanation ?? "").ToLowerInvariant();
+            Color titleColor;
+            Color badgeColor;
+            string severityLabel;
+
+            if (riskLower.StartsWith("critical"))
+            {
+                titleColor = Color.FromRgb(0xF4, 0x47, 0x47); // red
+                badgeColor = Color.FromRgb(0xB0, 0x20, 0x20);
+                severityLabel = "CRITICAL";
+            }
+            else if (riskLower.StartsWith("high"))
+            {
+                titleColor = Color.FromRgb(0xFF, 0x8C, 0x00); // orange
+                badgeColor = Color.FromRgb(0xC0, 0x60, 0x00);
+                severityLabel = "HIGH";
+            }
+            else if (riskLower.StartsWith("medium"))
+            {
+                titleColor = Color.FromRgb(0xFF, 0xD7, 0x00); // yellow
+                badgeColor = Color.FromRgb(0xA0, 0x90, 0x00);
+                severityLabel = "MEDIUM";
+            }
+            else
+            {
+                titleColor = Color.FromRgb(0x4E, 0xC9, 0xB0); // teal
+                badgeColor = Color.FromRgb(0x2E, 0x7D, 0x6E);
+                severityLabel = "INFO";
+            }
+
+            TitleText.Foreground = new SolidColorBrush(titleColor);
+            SeverityBadge.Background = new SolidColorBrush(badgeColor);
+            SeverityText.Text = severityLabel;
+
+            // Content
+            DescriptionText.Text = entry.ShortDescription ?? "No description available.";
+            RiskText.Text = entry.RiskExplanation ?? "Unknown";
+            HowToFixText.Text = entry.HowToFix ?? "No guidance available.";
+            BadPatternText.Text = entry.CodePatternBad ?? "N/A";
+            GoodPatternText.Text = entry.CodePatternGood ?? "N/A";
+            CweText.Text = entry.CWEs != null && entry.CWEs.Length > 0
+                ? string.Join(", ", entry.CWEs)
+                : "None";
+        }
+
+        private void CloseButton_Click(object sender, RoutedEventArgs e)
+        {
+            Close();
+        }
+    }
+}
