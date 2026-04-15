@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title type="text">Offensive360 SAST — Private Gallery</title>
+  <id>urn:uuid:offensive360-vs-gallery</id>
+  <updated>2026-04-15T21:30:00Z</updated>
+  <entry>
+    <id>Offensive360.VSExt.1.12.18</id>
+    <title type="text">Offensive 360</title>
+    <summary type="text">Enterprise Static Application Security Testing integrated into Visual Studio.</summary>
+    <published>2026-04-15T21:30:00Z</published>
+    <updated>2026-04-15T21:30:00Z</updated>
+    <author><name>Offensive 360</name></author>
+    <content type="application/octet-stream"
+             src="https://github.com/offensive360/VisualStudio/releases/download/v1.12.18/Offensive360.VSExt.vsix"/>
+    <Vsix xmlns="http://schemas.microsoft.com/developer/vsx-syndication-schema/2010">
+      <Id>Offensive360.4ee6a1a8-02c9-4cd5-87a9-dbcbbf133bd6</Id>
+      <Version>1.12.18</Version>
+    </Vsix>
+  </entry>
+</feed>
