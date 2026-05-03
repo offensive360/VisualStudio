@@ -29,5 +29,8 @@ using System.Runtime.InteropServices;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+// Keep this in sync with source.extension.vsixmanifest <Identity Version="...">.
+// PluginUpdateChecker reads this at runtime so we don't drift from the manifest.
+[assembly: AssemblyVersion("1.12.23.0")]
+[assembly: AssemblyFileVersion("1.12.23.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("1.12.23")]

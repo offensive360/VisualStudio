@@ -23,9 +23,38 @@ namespace Offensive360.VSExt.Helpers
     /// </summary>
     internal static class PluginUpdateChecker
     {
-        private const string CurrentVersion = "1.12.13";
+        // Read version from the assembly so we never have to bump it in two
+        // places when releasing. Hard-coding it (1.12.13 was stale through
+        // v1.12.14..v1.12.22) caused the "update available" dialog to keep
+        // firing on every VS open even after the user installed a newer build.
+        private static readonly string CurrentVersion = ReadAssemblyVersion();
         private const string ReleasesApiUrl = "https://api.github.com/repos/offensive360/VisualStudio/releases/latest";
-        private const string UserAgent = "Offensive360-VS-Plugin/" + CurrentVersion;
+        private static readonly string UserAgent = "Offensive360-VS-Plugin/" + CurrentVersion;
+
+        private static string ReadAssemblyVersion()
+        {
+            try
+            {
+                var asm = typeof(PluginUpdateChecker).Assembly;
+                // AssemblyInformationalVersion wins over AssemblyVersion if present;
+                // otherwise fall back to the file version. Strip any "+commit" suffix.
+                var infoAttr = (System.Reflection.AssemblyInformationalVersionAttribute)Attribute.GetCustomAttribute(
+                    asm, typeof(System.Reflection.AssemblyInformationalVersionAttribute));
+                var ver = infoAttr?.InformationalVersion;
+                if (string.IsNullOrWhiteSpace(ver)) ver = asm.GetName().Version?.ToString();
+                if (string.IsNullOrWhiteSpace(ver)) return "0.0.0";
+                var plus = ver.IndexOf('+');
+                if (plus > 0) ver = ver.Substring(0, plus);
+                // AssemblyVersion is 4-part (1.12.22.0) — drop the trailing .0 to match
+                // the GitHub-release tag_name format ("v1.12.22").
+                if (ver.EndsWith(".0")) ver = ver.Substring(0, ver.Length - 2);
+                return ver;
+            }
+            catch
+            {
+                return "0.0.0";
+            }
+        }
         private static readonly TimeSpan CacheTtl = TimeSpan.FromHours(24);
         private static DateTime _lastCheck = DateTime.MinValue;
         private static bool _notifiedThisSession = false;
