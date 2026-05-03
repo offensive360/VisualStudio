@@ -177,11 +177,27 @@ export class SastApi {
     this.token = config.get<string>('accessToken') || '';
     const allowSelfSigned = config.get<boolean>('allowSelfSignedCerts') || false;
 
+    // Load corporate root CA if NODE_EXTRA_CA_CERTS env var is set, OR from o360.extraCaCerts setting.
+    // This is needed on Windows behind TLS-intercepting proxies (Zscaler, Netskope, etc).
+    let extraCa: Buffer | undefined;
+    const extraCaPath = config.get<string>('extraCaCerts') || process.env.NODE_EXTRA_CA_CERTS;
+    if (extraCaPath) {
+      try { extraCa = fs.readFileSync(extraCaPath); } catch (e) { logError('loadConfig.extraCaCerts', e); }
+    }
+
+    // Always use a keep-alive agent. Default Node.js global agent on Windows
+    // can drop sockets aggressively under TLS-intercepting proxies → "socket hang up".
+    const agentOpts: https.AgentOptions = {
+      keepAlive: true,
+      keepAliveMsecs: 30000,
+      rejectUnauthorized: !allowSelfSigned,
+    };
+    if (extraCa) { agentOpts.ca = extraCa; }
+    this.httpsAgent = new https.Agent(agentOpts);
+
     if (allowSelfSigned) {
-      this.httpsAgent = new https.Agent({ rejectUnauthorized: false });
       process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
     } else {
-      this.httpsAgent = undefined;
       delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
     }
 
@@ -189,7 +205,9 @@ export class SastApi {
       baseURL: this.baseUrl,
       timeout: 600000,
       httpsAgent: this.httpsAgent,
-      headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {}
+      headers: this.token ? { 'Authorization': `Bearer ${this.token}` } : {},
+      // Surface socket-level failures clearly instead of swallowing them
+      validateStatus: (s) => s >= 200 && s < 300,
     });
   }
 
@@ -290,22 +308,77 @@ export class SastApi {
   }
 
   async scanFileUpload(zipPath: string, projectName: string): Promise<any> {
-    const form = new FormData();
-    form.append('FileSource', fs.createReadStream(zipPath));
-    form.append('Name', projectName);
-    form.append('ExternalScanSourceType', 'VsCodeExtension');
+    return this.uploadWithRetry('/app/api/Project/scanProjectFile', zipPath, projectName, 'VsCodeExtension', 'FileSource');
+  }
 
-    const response = await this.client.post('/app/api/Project/scanProjectFile', form, {
-      headers: {
-        ...form.getHeaders(),
-        'Authorization': `Bearer ${this.token}`
-      },
-      maxContentLength: Infinity,
-      maxBodyLength: Infinity,
-      timeout: 600000,
-      httpsAgent: this.httpsAgent
-    });
-    return response.data;
+  /**
+   * Wraps a multipart upload with bounded retries on transient socket-level failures.
+   * Re-creates the FormData and read stream on every attempt — streams are not reusable.
+   */
+  private async uploadWithRetry(
+    urlPath: string,
+    zipPath: string,
+    projectName: string,
+    sourceType: string,
+    fileFieldName: string,
+    extraFields?: Record<string, string>
+  ): Promise<any> {
+    const transientCodes = new Set([
+      'ECONNRESET', 'ETIMEDOUT', 'ECONNABORTED', 'EPIPE',
+      'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'
+    ]);
+    // axios surfaces "socket hang up" with code undefined; match by message too
+    const isSocketHangup = (err: any) =>
+      typeof err?.message === 'string' && err.message.toLowerCase().includes('socket hang up');
+
+    const maxAttempts = 3;
+    let lastErr: any;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const form = new FormData();
+      form.append(fileFieldName, fs.createReadStream(zipPath));
+      form.append('Name', projectName);
+      form.append('ExternalScanSourceType', sourceType);
+      if (extraFields) {
+        for (const [k, v] of Object.entries(extraFields)) { form.append(k, v); }
+      }
+
+      try {
+        logInfo('uploadWithRetry', `attempt ${attempt}/${maxAttempts} → ${urlPath}`);
+        const response = await this.client.post(urlPath, form, {
+          headers: {
+            ...form.getHeaders(),
+            'Authorization': `Bearer ${this.token}`,
+          },
+          maxContentLength: Infinity,
+          maxBodyLength: Infinity,
+          timeout: 600000,
+          httpsAgent: this.httpsAgent,
+        });
+        return response.data;
+      } catch (err: any) {
+        lastErr = err;
+        const code = err?.code;
+        const transient = (code && transientCodes.has(code)) || isSocketHangup(err);
+        const status = err?.response?.status;
+        // Don't retry on auth/permission/client errors — they won't get better
+        if (status && status < 500 && status !== 408 && status !== 429) {
+          throw err;
+        }
+        if (!transient && !status) {
+          // Unknown non-HTTP error — log and surface
+          logError('uploadWithRetry', err);
+          throw err;
+        }
+        if (attempt < maxAttempts) {
+          const backoffMs = 2000 * attempt;
+          logInfo('uploadWithRetry', `transient error (${code || err.message}); retrying in ${backoffMs}ms`);
+          await new Promise(r => setTimeout(r, backoffMs));
+          continue;
+        }
+      }
+    }
+    throw lastErr;
   }
 
   /**

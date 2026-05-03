@@ -2,7 +2,7 @@
   "name": "offensive360",
   "displayName": "Offensive360 SAST",
   "description": "Static Application Security Testing (SAST) — scan your code for vulnerabilities directly from VS Code. Supports C#, Java, JavaScript/TypeScript, Python, PHP, Ruby, Go, Kotlin, Swift, Dart, C/C++, and more.",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "homepage": "https://offensive360.com",
   "publisher": "Offensive360",
   "icon": "resources/logo.png",
@@ -89,6 +89,11 @@
           "type": "boolean",
           "default": false,
           "description": "Allow self-signed SSL certificates (for on-premise O360 instances)"
+        },
+        "o360.extraCaCerts": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a PEM file with extra root CAs (e.g., your corporate root CA). Use this when behind a TLS-intercepting proxy like Zscaler or Netskope."
         }
       }
     },

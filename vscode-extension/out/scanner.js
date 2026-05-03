@@ -402,7 +402,9 @@ class Scanner {
                     if (stats.size > 50 * 1024 * 1024) {
                         continue; // Skip files > 50MB
                     }
-                    archive.file(filePath, { name: entryRelPath });
+                    // Zip spec requires forward slashes; on Windows path.join produces backslashes
+                    // which some servers reject mid-stream and close the socket ("socket hang up").
+                    archive.file(filePath, { name: entryRelPath.split(path.sep).join('/') });
                 }
                 catch {
                     // Skip unreadable files

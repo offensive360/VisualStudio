@@ -6,11 +6,35 @@ This section explains how to install and configure the Offensive 360 Visual Stud
 
 ## Installing the Plugin
 
-1. Open the Microsoft Visual Studio application, navigate to the Extensions and click on Manage Extensions. 
+### Option A — From the Marketplace (recommended)
+
+1. Open Microsoft Visual Studio. Go to **Extensions → Manage Extensions**.
 ![image](https://user-images.githubusercontent.com/13881466/179386371-b154f676-b3cb-40f9-a2a3-ccc4c087b61f.png)
 
-2. Search for **Offensive 360** and click on download
+2. Search for **Offensive 360** and click **Download**.
 ![image](https://user-images.githubusercontent.com/13881466/179388357-3882e518-45f9-429d-a2e8-da54cd1a264c.png)
+
+3. Close Visual Studio. The VSIX Installer will run automatically and complete the install.
+
+### Option B — From a downloaded `.vsix` file
+
+> **⚠ Do NOT run the installer from Git Bash, MSYS, Cygwin, or WSL.**
+> These shells convert any leading-slash argument (like `/admin` or `/quiet`) into a Windows path under their install root, which breaks VSIXInstaller with the error
+> `Path to vsix file 'C:/Program Files/Git/admin' is invalid`.
+> Use `cmd.exe` or PowerShell instead.
+
+1. Close Visual Studio.
+2. **Easiest:** double-click `install-vsix.cmd` (provided in the release zip). It locates VSIXInstaller.exe and installs the `.vsix` automatically — no flags, no shell pitfalls.
+3. **Manual (cmd.exe / PowerShell):**
+   ```
+   "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\VSIXInstaller.exe" /quiet "C:\path\to\Offensive360.VSExt.vsix"
+   ```
+   Adjust the path for your VS edition (Community / Professional / Enterprise) and year.
+4. **If you must use Git Bash**, escape the leading slash so MSYS doesn't translate it:
+   ```
+   "/c/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/VSIXInstaller.exe" //quiet "/c/path/to/plugin.vsix"
+   ```
+   Note `//quiet` (double slash) — this is the MSYS escape for `/quiet`.
 
 
 ## Configuring Offensive 360 Settings
