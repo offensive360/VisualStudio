@@ -86,6 +86,12 @@ namespace Offensive360.VSExt.ToolWindow
             DetailDescription.Text = row.Description ?? "";
             DetailRecommendation.Text = row.Recommendation ?? "";
             DetailCode.Text = row.CodeSnippet ?? "";
+
+            // Keep the editor in sync with the selected row. Without this, the
+            // detail pane could show line 34 / "AKIA..." while the editor was
+            // still parked at line 32 / "stripeApiKey" from the previous
+            // double-click — reported as "line and code is different".
+            NavigateTo(row);
         }
 
         private void FindingsGrid_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
@@ -101,12 +107,16 @@ namespace Offensive360.VSExt.ToolWindow
             {
                 ThreadHelper.ThrowIfNotOnUIThread();
                 var dte = Package.GetGlobalService(typeof(EnvDTE.DTE)) as DTE;
-                if (dte == null) return;
+                if (dte == null) { try { Offensive360.VSExt.Helpers.O360Logger.Log("[Nav] dte=null"); } catch {} return; }
 
                 string path = row.AbsoluteFilePath;
+                // ItemOperations.OpenFile silently returns null for non-rooted paths,
+                // so any relative survivor must be re-resolved under the solution folder
+                // here. (Belt-and-braces: ResolveAbsoluteFilePath already guarantees
+                // absolute paths in v1.12.21+.)
+                if (!string.IsNullOrWhiteSpace(path) && !Path.IsPathRooted(path)) path = null;
                 if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
                 {
-                    // Fall back to resolving via File name under the solution folder
                     try
                     {
                         var sol = dte.Solution?.FullName;
@@ -116,60 +126,67 @@ namespace Offensive360.VSExt.ToolWindow
                             if (!string.IsNullOrEmpty(solDir) && !string.IsNullOrEmpty(row.File))
                             {
                                 var matches = Directory.GetFiles(solDir, row.File, SearchOption.AllDirectories);
-                                if (matches != null && matches.Length > 0) path = matches[0];
+                                if (matches != null && matches.Length > 0) path = Path.GetFullPath(matches[0]);
                             }
                         }
                     }
                     catch { }
                 }
 
-                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) return;
+                if (string.IsNullOrWhiteSpace(path) || !File.Exists(path) || !Path.IsPathRooted(path))
+                {
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Nav] file not found/relative: row.File={row.File} abs={row.AbsoluteFilePath} resolved={path}"); } catch {}
+                    return;
+                }
 
-                // Explicitly request the text view, activate the returned window,
-                // and read Selection from the returned Window's Document — NOT from
-                // dte.ActiveDocument. ActiveDocument may still point to the
-                // previously-active document on the first click because the window
-                // activation hasn't propagated yet (this is the "4-click bug"
-                // reported against v1.12.10/11: first double-click jumped to the
-                // wrong line, second double-click worked).
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Nav] target {path}:{row.Line}:{row.Column}"); } catch {}
+
                 var win = dte.ItemOperations.OpenFile(path, EnvDTE.Constants.vsViewKindCode);
-                if (win == null) return;
+                if (win == null) { try { Offensive360.VSExt.Helpers.O360Logger.Log("[Nav] OpenFile returned null"); } catch {} return; }
                 try { win.Activate(); } catch { }
 
                 if (row.Line <= 0) return;
 
-                // Prefer the Selection from the Window's own Document. Fall back to
-                // ActiveDocument only if the Window didn't expose one.
+                // Always pull Selection from dte.ActiveDocument AFTER win.Activate().
+                // The win.Document path was unreliable on selection-driven navigation —
+                // GotoLine was being called against a stale TextSelection that didn't
+                // belong to the now-active editor, leaving the visible caret unmoved.
                 TextSelection selection = null;
-                try
-                {
-                    var winDoc = win.Document;
-                    if (winDoc != null)
-                    {
-                        selection = winDoc.Selection as TextSelection;
-                    }
-                }
-                catch { }
-
+                try { selection = dte.ActiveDocument?.Selection as TextSelection; } catch { }
                 if (selection == null)
-                {
-                    try { selection = dte.ActiveDocument?.Selection as TextSelection; } catch { }
-                }
-
-                if (selection != null)
                 {
                     try
                     {
-                        selection.GotoLine(row.Line, true);
-                        if (row.Column > 0)
-                        {
-                            try { selection.MoveToLineAndOffset(row.Line, row.Column, false); } catch { }
-                        }
+                        var winDoc = win.Document;
+                        if (winDoc != null) selection = winDoc.Selection as TextSelection;
                     }
                     catch { }
                 }
+
+                if (selection == null)
+                {
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log("[Nav] no TextSelection on active doc OR window"); } catch {}
+                    return;
+                }
+
+                try
+                {
+                    selection.GotoLine(row.Line, true);
+                    if (row.Column > 0)
+                    {
+                        try { selection.MoveToLineAndOffset(row.Line, row.Column, false); } catch { }
+                    }
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Nav] GotoLine({row.Line}) OK — caret now line={selection.CurrentLine}"); } catch {}
+                }
+                catch (Exception navEx)
+                {
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Nav] GotoLine threw {navEx.GetType().Name}: {navEx.Message}"); } catch {}
+                }
             }
-            catch { /* navigation failure must not crash the tool window */ }
+            catch (Exception outerEx)
+            {
+                try { Offensive360.VSExt.Helpers.O360Logger.Log($"[Nav] outer threw {outerEx.GetType().Name}: {outerEx.Message}"); } catch {}
+            }
         }
     }
 }

@@ -461,6 +461,15 @@ namespace Offensive360.VSExt.Helpers
                             var description = vulnerability.Vulnerability ?? "(no description provided by server)";
                             if (!string.IsNullOrWhiteSpace(vulnerability.Effect))
                                 description += "\n\nImpact: " + vulnerability.Effect;
+                            // The server's codeSnippet for hardcoded-secret findings is
+                            // sometimes just the literal value (e.g. "AKIAIO..."), which
+                            // doesn't match the source line at File:Line and confuses
+                            // users ("line and code is different"). Prefer the actual
+                            // file line, fall back to the server snippet if we can't
+                            // read the file.
+                            var serverSnippet = TryDecodeBase64CodeSnippet(vulnerability.CodeSnippet);
+                            var fileSnippet = ReadFileLineSafe(absFile, lineNo);
+                            var snippetForRow = !string.IsNullOrWhiteSpace(fileSnippet) ? fileSnippet : serverSnippet;
                             toolWindowRows.Add(new Offensive360.VSExt.ToolWindow.FindingRow
                             {
                                 Severity = NormalizeRiskLevel(vulnerability.RiskLevel),
@@ -474,7 +483,7 @@ namespace Offensive360.VSExt.Helpers
                                 Description = description,
                                 Recommendation = vulnerability.Recommendation ?? "",
                                 References = vulnerability.References ?? "",
-                                CodeSnippet = TryDecodeBase64CodeSnippet(vulnerability.CodeSnippet)
+                                CodeSnippet = snippetForRow
                             });
                         }
                         catch (Exception rowEx)
@@ -1583,6 +1592,33 @@ except Exception as e:
         private static readonly string[] riskLevelNames = { "SAFE", "LOW", "MEDIUM", "HIGH", "CRITICAL" };
 
         /// <summary>
+        /// Reads a single 1-based line from a file. Returns null on any failure
+        /// (file missing, line out of range, IO error) so callers can fall back.
+        /// </summary>
+        private static string ReadFileLineSafe(string absoluteFilePath, int oneBasedLine)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(absoluteFilePath) || oneBasedLine <= 0) return null;
+                if (!File.Exists(absoluteFilePath)) return null;
+                using (var reader = new StreamReader(absoluteFilePath))
+                {
+                    string line = null;
+                    for (int i = 0; i < oneBasedLine; i++)
+                    {
+                        line = reader.ReadLine();
+                        if (line == null) return null;
+                    }
+                    return line?.Trim();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
         /// Decodes a base64-encoded code snippet if the server returned one.
         /// The AI engine sometimes returns code snippets base64-encoded; heuristic-detect
         /// and decode. Returns the input unchanged if it's clearly plain text.
@@ -1620,24 +1656,31 @@ except Exception as e:
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(filePath) && File.Exists(filePath)) return filePath;
+                // Server may return a path that's already an absolute Windows path (e.g.
+                // "C:\...\file.cs") — keep it. If it's relative ("Controllers/file.cs")
+                // we MUST anchor it to the solution folder; otherwise File.Exists will
+                // succeed against VS's cwd and we'll hand a relative string to
+                // dte.ItemOperations.OpenFile, which silently fails (returns null) and
+                // the tool window's navigation appears to do nothing.
+                if (!string.IsNullOrWhiteSpace(filePath) && Path.IsPathRooted(filePath) && File.Exists(filePath))
+                    return filePath;
+
                 if (!string.IsNullOrWhiteSpace(solutionFolder) && !string.IsNullOrWhiteSpace(filePath))
                 {
                     var joined = Path.Combine(solutionFolder, filePath.TrimStart('\\', '/'));
-                    if (File.Exists(joined)) return joined;
-                    // Strip common zip prefix dirs one level at a time
+                    if (File.Exists(joined)) return Path.GetFullPath(joined);
                     var parts = filePath.Replace('\\', '/').Split('/');
                     for (int start = 1; start < parts.Length; start++)
                     {
                         var sub = string.Join("\\", parts, start, parts.Length - start);
                         var candidate = Path.Combine(solutionFolder, sub);
-                        if (File.Exists(candidate)) return candidate;
+                        if (File.Exists(candidate)) return Path.GetFullPath(candidate);
                     }
                 }
                 if (!string.IsNullOrWhiteSpace(solutionFolder) && !string.IsNullOrWhiteSpace(fileName))
                 {
                     var matches = Directory.GetFiles(solutionFolder, fileName, SearchOption.AllDirectories);
-                    if (matches != null && matches.Length > 0) return matches[0];
+                    if (matches != null && matches.Length > 0) return Path.GetFullPath(matches[0]);
                 }
             }
             catch { }
