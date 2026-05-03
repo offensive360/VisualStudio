@@ -13,7 +13,7 @@
       </Group>
       <!-- View > Other Windows group -->
       <Group guid="guidO360CmdSet" id="grpO360View" priority="0x0100">
-        <Parent guid="guidSHLMainMenu" id="IDG_VS_VIEW_TOOLWINDOWS"/>
+        <Parent guid="guidSHLMainMenu" id="IDG_VS_VIEW_DEV_WINDOWS"/>
       </Group>
     </Groups>
 

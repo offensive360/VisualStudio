@@ -124,6 +124,41 @@ namespace OffensiveVS360.Services
             CancellationToken cancellationToken)
         {
             var endpoint = settings.Endpoint.TrimEnd('/');
+
+            _httpClient.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", settings.AccessToken);
+
+            // Try ExternalScan first, fall back to Project/scanProjectFile if 403
+            var useExternalScan = await IsExternalScanAvailable(endpoint, cancellationToken);
+
+            if (useExternalScan)
+            {
+                return await PostViaExternalScan(endpoint, settings, projectName, zipBytes, fileName, cancellationToken);
+            }
+            else
+            {
+                return await PostViaProjectScan(endpoint, settings, projectName, zipBytes, fileName, cancellationToken);
+            }
+        }
+
+        private async Task<bool> IsExternalScanAvailable(string endpoint, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var url = $"{endpoint}/app/api/ExternalScan/scanQueuePosition";
+                var response = await _httpClient.GetAsync(url, cancellationToken);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private async Task<ScanResponse> PostViaExternalScan(
+            string endpoint, O360Settings settings, string projectName, byte[] zipBytes,
+            string fileName, CancellationToken cancellationToken)
+        {
             var url = $"{endpoint}/app/api/ExternalScan";
 
             using (var content = new MultipartFormDataContent())
@@ -139,20 +174,126 @@ namespace OffensiveVS360.Services
                 fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
                 content.Add(fileContent, "fileSource", fileName);
 
-                _httpClient.DefaultRequestHeaders.Authorization =
-                    new AuthenticationHeaderValue("Bearer", settings.AccessToken);
-
-                // Start scan request in background, poll queue position while waiting
                 var scanTask = _httpClient.PostAsync(url, content, cancellationToken);
-
                 await PollQueuePositionAsync(settings, projectName, cancellationToken);
-
                 var response = await scanTask;
                 response.EnsureSuccessStatusCode();
 
                 var json = await response.Content.ReadAsStringAsync();
                 return JsonConvert.DeserializeObject<ScanResponse>(json);
             }
+        }
+
+        private async Task<ScanResponse> PostViaProjectScan(
+            string endpoint, O360Settings settings, string projectName, byte[] zipBytes,
+            string fileName, CancellationToken cancellationToken)
+        {
+            var url = $"{endpoint}/app/api/Project/scanProjectFile";
+
+            using (var content = new MultipartFormDataContent())
+            {
+                content.Add(new StringContent(projectName), "Name");
+                content.Add(new StringContent(ScanSourceType), "ExternalScanSourceType");
+
+                var fileContent = new ByteArrayContent(zipBytes);
+                fileContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/zip");
+                content.Add(fileContent, "FileSource", fileName);
+
+                ReportProgress("Uploading to server...");
+                var response = await _httpClient.PostAsync(url, content, cancellationToken);
+                response.EnsureSuccessStatusCode();
+
+                var json = await response.Content.ReadAsStringAsync();
+
+                // Project endpoint returns projectId, need to poll for completion then fetch results
+                string projectId = null;
+                try
+                {
+                    var obj = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+                    if (obj != null)
+                    {
+                        if (obj.ContainsKey("id")) projectId = obj["id"]?.ToString();
+                        else if (obj.ContainsKey("projectId")) projectId = obj["projectId"]?.ToString();
+                    }
+                }
+                catch
+                {
+                    projectId = json.Trim().Trim('"');
+                }
+
+                if (string.IsNullOrEmpty(projectId))
+                    throw new Exception("No project ID returned from server");
+
+                ReportProgress("Waiting for scan to complete...");
+                return await WaitForScanAndFetchResults(endpoint, projectId, cancellationToken);
+            }
+        }
+
+        private async Task<ScanResponse> WaitForScanAndFetchResults(string endpoint, string projectId, CancellationToken cancellationToken)
+        {
+            var maxWait = MaxQueueWaitMinutes * 60 * 1000;
+            var elapsed = 0;
+
+            while (elapsed < maxWait && !cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(5000, cancellationToken);
+                elapsed += 5000;
+
+                var statusUrl = $"{endpoint}/app/api/Project/{projectId}";
+                var response = await _httpClient.GetAsync(statusUrl, cancellationToken);
+
+                if (!response.IsSuccessStatusCode) continue;
+
+                var json = await response.Content.ReadAsStringAsync();
+                var project = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+
+                if (project == null || !project.ContainsKey("status")) continue;
+
+                var status = Convert.ToInt32(project["status"]);
+                switch (status)
+                {
+                    case 2: // Succeeded
+                    case 4: // Partial
+                        ReportProgress("Fetching results...");
+                        return await FetchProjectResults(endpoint, projectId, cancellationToken);
+                    case 3: // Failed
+                        throw new Exception("Scan failed on server");
+                    case 5: // Skipped
+                        throw new Exception("Scan was skipped by server");
+                    default: // Queued (0) or InProgress (1)
+                        var statusText = status == 0 ? "Queued" : "In Progress";
+                        ReportProgress($"Scan {statusText}...");
+                        break;
+                }
+            }
+
+            throw new Exception($"Scan timed out after {MaxQueueWaitMinutes} minutes");
+        }
+
+        private async Task<ScanResponse> FetchProjectResults(string endpoint, string projectId, CancellationToken cancellationToken)
+        {
+            var result = new ScanResponse();
+            result.Vulnerabilities = new List<Vulnerability>();
+
+            // Fetch language vulnerabilities
+            var langUrl = $"{endpoint}/app/api/Project/{projectId}/LangaugeScanResult?page=1&pageSize=500";
+            try
+            {
+                var response = await _httpClient.GetAsync(langUrl, cancellationToken);
+                if (response.IsSuccessStatusCode)
+                {
+                    var json = await response.Content.ReadAsStringAsync();
+                    var pageData = JsonConvert.DeserializeObject<Dictionary<string, object>>(json);
+                    if (pageData != null && pageData.ContainsKey("pageItems"))
+                    {
+                        var items = JsonConvert.DeserializeObject<List<Vulnerability>>(pageData["pageItems"].ToString());
+                        if (items != null) result.Vulnerabilities.AddRange(items);
+                    }
+                }
+            }
+            catch { /* ignore fetch errors for individual result types */ }
+
+            return result;
         }
 
         private async Task PollQueuePositionAsync(O360Settings settings, string projectName, CancellationToken cancellationToken)
