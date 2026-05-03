@@ -63,7 +63,27 @@ namespace Offensive360.VSExt.Helpers
             ".woff", ".woff2", ".ttf", ".otf", ".eot",
             ".db", ".sqlite", ".mdb", ".lock",
             ".sln", ".csproj", ".vbproj", ".vcxproj", ".fsproj", ".proj",
-            ".suo", ".user", ".cache", ".snk", ".pfx", ".p12"
+            ".suo", ".user", ".cache", ".snk", ".pfx", ".p12",
+            // v1.12.24: expanded set — large/non-source files that bloat uploads
+            // and never produce findings. Helps customers with 500MB+ projects fit
+            // under the 120s Akamai gateway timeout on inline ExternalScan.
+            ".csv", ".tsv", ".parquet", ".avro", ".orc",   // data
+            ".map", ".snap",                                // sourcemap, jest snapshots
+            ".pack", ".idx",                                // git pack files (when .git survives)
+            ".whl", ".egg", ".deb", ".rpm", ".msi",         // language/OS packages
+            ".dylib", ".so", ".o", ".obj", ".lib", ".a"     // native binaries
+        };
+
+        // Suffix-based exclusions for filenames the server can't extract findings from.
+        // Generated/minified files balloon zip size for zero analytical value.
+        public static readonly string[] ExcludeFileSuffixes = new[] {
+            ".min.js", ".min.css", ".min.mjs",
+            ".bundle.js", ".bundle.css",
+            ".designer.cs", ".g.cs", ".generated.cs", ".g.i.cs",
+            ".dll.config", ".exe.config",
+            ".chunk.js", ".chunk.css",
+            ".mjs.map", ".cjs.map",
+            ".pb.cs", ".pb.go"           // protobuf-generated
         };
 
         // KEEP IN LOCKSTEP with AS plugin FileCollector.kt SKIP_DIRS.
@@ -74,8 +94,26 @@ namespace Offensive360.VSExt.Helpers
             ".idea", ".vscode", "node_modules", "packages",
             "dist", "build", "out", "target", ".gradle", "__pycache__",
             ".SASTO360", "TestResults", "test-results", ".nuget",
-            ".node_modules", ".pytest_cache", ".next", "coverage"
+            ".node_modules", ".pytest_cache", ".next", "coverage",
+            // v1.12.24: more bulky non-source folders
+            "vendor", "vendors", "third_party", "third-party", "thirdparty",
+            "__snapshots__", "__mocks__",
+            ".terraform", ".serverless", ".cache",
+            "Pods", "DerivedData", "xcuserdata",
+            ".tox", ".mypy_cache", ".ruff_cache",
+            "wheels", "site-packages",
+            "Migrations"   // EF Core migrations: per-class generated, rarely actionable
         };
+
+        public static bool HasExcludedSuffix(string fileName)
+        {
+            if (string.IsNullOrEmpty(fileName)) return false;
+            for (int i = 0; i < ExcludeFileSuffixes.Length; i++)
+            {
+                if (fileName.EndsWith(ExcludeFileSuffixes[i], StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
 
         /// <summary>
         /// Returns true if the given folder name (single path segment, not full path)
@@ -148,6 +186,7 @@ namespace Offensive360.VSExt.Helpers
             {
                 var ext = Path.GetExtension(file);
                 if (ExcludeExts.Contains(ext)) continue;
+                if (HasExcludedSuffix(Path.GetFileName(file))) continue;
                 var relativePath = file.Substring(folderPath.Length).TrimStart('\\', '/');
                 var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
                 if (Array.Exists(parts, p => IsExcludedFolder(p))) continue;

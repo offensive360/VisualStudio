@@ -23,6 +23,13 @@ namespace Offensive360.VSExt.Helpers
         private const long MaxFileSizeBytes = 50L * 1024 * 1024; // 50 MB per-file limit
         private const int LargeProjectFileThreshold = 5000;
 
+        // Auto-split threshold (v1.12.24): when the zip would exceed this size we split
+        // the upload into multiple smaller zips, each scanned separately, and merge findings
+        // client-side. Tuned so each chunk's compressed upload finishes well under the
+        // 120s Akamai/CDN gateway timeout customers have on instances like madfoat.
+        private const long AutoSplitZipThresholdBytes = 60L * 1024 * 1024;     // 60 MB compressed
+        private const long AutoSplitBucketSourceBytes = 80L * 1024 * 1024;     // 80 MB raw per bucket
+
         private static bool _scanInProgress = false;
         private static string currentFilePath;
         private static string scanFileEndpoint = "/app/api/Project/scanProjectFile";
@@ -131,9 +138,19 @@ namespace Offensive360.VSExt.Helpers
                 _tempZipPath = zipPath;
                 try { Offensive360.VSExt.Helpers.O360Logger.Log($"Zip created: {zipPath} ({new FileInfo(zipPath).Length / 1024}KB)"); } catch {}
 
-                // Warn about large uploads
                 var zipSizeMb = new FileInfo(zipPath).Length / (1024 * 1024);
-                if (zipSizeMb > 200)
+                List<string> chunkZips = null;
+                bool autoSplit = new FileInfo(zipPath).Length > AutoSplitZipThresholdBytes;
+                if (autoSplit)
+                {
+                    // Single zip would likely time out at the gateway. Build N smaller zips
+                    // and scan each separately, merging findings client-side.
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Auto-split engaged: single zip is {zipSizeMb}MB > {AutoSplitZipThresholdBytes / (1024*1024)}MB threshold — switching to chunked upload"); } catch {}
+                    await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Large project ({zipSizeMb}MB) — splitting into chunks for upload...");
+                    chunkZips = await Task.Run(() => ZipFolderToChunks(solutionFolder, AutoSplitBucketSourceBytes));
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"Auto-split: built {chunkZips.Count} chunk zips, total {(chunkZips.Sum(z => new FileInfo(z).Length)) / (1024*1024)}MB"); } catch {}
+                }
+                else if (zipSizeMb > 200)
                 {
                     await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 3/5] Large upload ({zipSizeMb}MB) — this may take several minutes...");
                     System.Diagnostics.Debug.WriteLine($"Offensive360: Large zip file ({zipSizeMb}MB). Upload may take longer.");
@@ -185,6 +202,83 @@ namespace Offensive360.VSExt.Helpers
                             "Please contact your Offensive 360 administrator to reactivate the license. " +
                             "Once reactivated, scans will resume automatically.");
                     }
+                }
+
+                // === AUTO-SPLIT EXTERNALSCAN PATH (v1.12.24) ===
+                // When the full zip is too big for a single gateway-bounded request, we
+                // upload N smaller chunks via ExternalScan and merge findings. This bypasses
+                // both scanProjectFile (which 403s for External tokens) and the dashboard-match
+                // step (each chunk creates an ephemeral temp project with KeepInvisibleAndDeletePostScan=True).
+                if (scanResponse == null && autoSplit && chunkZips != null && chunkZips.Count > 0)
+                {
+                    var extEndpoint = $"{Settings.Default.BaseUrl.TrimEnd('/')}{externalScanEndpoint}";
+                    var mergedVulns = new List<VulnerabilityResponse>();
+                    int chunkIdx = 0;
+                    int chunkTotal = chunkZips.Count;
+                    string firstProjectId = null;
+                    foreach (var cz in chunkZips)
+                    {
+                        chunkIdx++;
+                        var cSizeKb = new FileInfo(cz).Length / 1024;
+                        await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Scanning chunk {chunkIdx}/{chunkTotal} ({cSizeKb} KB)...");
+                        // Server enforces Name<=50 chars. solutionBaseName(<=13) + "_" + Guid(36) is
+                        // already 50; appending "_cNN" overflows. Build a compact, unique chunk name.
+                        var shortBase = (solutionBaseName ?? "scan");
+                        if (shortBase.Length > 8) shortBase = shortBase.Substring(0, 8);
+                        var shortGuid = Guid.NewGuid().ToString("N").Substring(0, 12);
+                        var chunkProjectName = $"{shortBase}_c{chunkIdx:D2}_{shortGuid}"; // <= 25 chars
+                        // Per-chunk retry budget mirrors the single-shot path: 6 attempts with backoff.
+                        int[] backoff = { 0, 15, 30, 60, 120, 240 };
+                        const int maxRetries = 6;
+                        int code = 0; string body = null;
+                        for (int attempt = 1; attempt <= maxRetries; attempt++)
+                        {
+                            if (attempt > 1)
+                            {
+                                var w = attempt - 1 < backoff.Length ? backoff[attempt - 1] : 240;
+                                await statusBar.ShowProgressAsync($"{projectScanMessagePrefix} [Step 4/5] Chunk {chunkIdx}/{chunkTotal} retry {attempt}/{maxRetries} after {w}s...");
+                                await Task.Delay(w * 1000);
+                            }
+                            (code, body) = await PostScanViaCurl(extEndpoint, Settings.Default.AccessToken, cz, chunkProjectName);
+                            if (code >= 200 && code < 300) break;
+                            // Non-retryable: transport failure, auth, payload-too-large, or any 4xx that
+                            // means "this request will never succeed" (400 bad request, 404 not found, 422
+                            // validation). Retrying these just wastes time on big projects.
+                            if (code == 0 || code == 401 || code == 403 || code == 413 ||
+                                (code >= 400 && code < 500 && code != 408 && code != 429)) break;
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[chunk {chunkIdx}/{chunkTotal}] HTTP {code} attempt {attempt}/{maxRetries}"); } catch {}
+                        }
+                        if (code < 200 || code >= 300)
+                        {
+                            var bodyPreview = string.IsNullOrEmpty(body) ? "(no body)" : (body.Length > 300 ? body.Substring(0, 300) + "..." : body);
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[chunk {chunkIdx}/{chunkTotal}] FAILED HTTP {code} — body: {bodyPreview}"); } catch {}
+                            continue;
+                        }
+                        try
+                        {
+                            var resp = JsonConvert.DeserializeObject<ScanResponse>(body);
+                            if (resp?.Vulnerabilities != null) mergedVulns.AddRange(resp.Vulnerabilities);
+                            if (firstProjectId == null)
+                            {
+                                try { firstProjectId = Newtonsoft.Json.Linq.JObject.Parse(body).Value<string>("projectId"); } catch { }
+                            }
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[chunk {chunkIdx}/{chunkTotal}] OK — {resp?.Vulnerabilities?.Count() ?? 0} findings (running total {mergedVulns.Count})"); } catch {}
+                        }
+                        catch (Exception parseEx)
+                        {
+                            try { Offensive360.VSExt.Helpers.O360Logger.Log($"[chunk {chunkIdx}/{chunkTotal}] parse error: {parseEx.Message}"); } catch {}
+                        }
+                    }
+
+                    scanResponse = new ScanResponse
+                    {
+                        Vulnerabilities = mergedVulns,
+                        TotalVulnerabilities = mergedVulns.Count
+                    };
+                    try { Offensive360.VSExt.Helpers.O360Logger.Log($"[chunked] merged {mergedVulns.Count} findings from {chunkTotal} chunks"); } catch {}
+
+                    // Best-effort cleanup of the per-chunk temp zips
+                    foreach (var cz in chunkZips) { try { File.Delete(cz); } catch { } }
                 }
 
                 // If we got canonical dashboard findings above, skip the scan entirely.
@@ -1002,6 +1096,9 @@ namespace Offensive360.VSExt.Helpers
                     var ext = Path.GetExtension(file);
                     if (ScanCache.ExcludeExts.Contains(ext)) continue;
 
+                    var fileName = Path.GetFileName(file);
+                    if (ScanCache.HasExcludedSuffix(fileName)) continue;
+
                     var relativePath = file.Substring(from.FullName.Length).TrimStart('\\', '/');
                     var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
                     if (parts.Any(p => ScanCache.IsExcludedFolder(p))) continue;
@@ -1058,6 +1155,75 @@ namespace Offensive360.VSExt.Helpers
             }
 
             return tempFile;
+        }
+
+        /// <summary>
+        /// Splits the solution into multiple zip files, each ≤ <paramref name="bucketSourceBytes"/>
+        /// of raw source. Used when the single full zip would exceed the gateway timeout
+        /// budget. Each chunk is scanned independently and findings are merged client-side.
+        ///
+        /// Bucketing rule: walk the file tree depth-first, accumulate files (with the same
+        /// exclusion rules as ZipFolderToFile) into a running bucket; when adding the next
+        /// file would push the bucket over the limit, seal it and start a new one. This
+        /// preserves directory locality (most files in the same folder land in the same chunk)
+        /// without relying on top-level structure that some projects don't have.
+        /// </summary>
+        private static List<string> ZipFolderToChunks(string folderPath, long bucketSourceBytes)
+        {
+            var zips = new List<string>();
+            if (!Directory.Exists(folderPath)) return zips;
+
+            var from = new DirectoryInfo(folderPath);
+            var bucket = new List<(string abs, string rel, long size)>();
+            long bucketBytes = 0;
+
+            void FlushBucket()
+            {
+                if (bucket.Count == 0) return;
+                var tempFile = Path.GetTempFileName();
+                try { File.Delete(tempFile); } catch { }
+                tempFile = Path.ChangeExtension(tempFile, ".zip");
+                using (var zipStream = new FileStream(tempFile, FileMode.Create))
+                using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
+                {
+                    foreach (var (abs, rel, _) in bucket)
+                    {
+                        try { archive.CreateEntryFromFile(abs, rel.Replace("\\", "/")); }
+                        catch { /* skip unreadable files */ }
+                    }
+                }
+                zips.Add(tempFile);
+                bucket.Clear();
+                bucketBytes = 0;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(folderPath, "*", SearchOption.AllDirectories))
+            {
+                var ext = Path.GetExtension(file);
+                if (ScanCache.ExcludeExts.Contains(ext)) continue;
+
+                var fileName = Path.GetFileName(file);
+                if (ScanCache.HasExcludedSuffix(fileName)) continue;
+
+                var relativePath = file.Substring(from.FullName.Length).TrimStart('\\', '/');
+                var parts = relativePath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                if (parts.Any(p => ScanCache.IsExcludedFolder(p))) continue;
+
+                long len;
+                try
+                {
+                    var fi = new FileInfo(file);
+                    if (fi.Length > MaxFileSizeBytes) continue;
+                    len = fi.Length;
+                }
+                catch { continue; }
+
+                if (bucketBytes > 0 && bucketBytes + len > bucketSourceBytes) FlushBucket();
+                bucket.Add((file, relativePath, len));
+                bucketBytes += len;
+            }
+            FlushBucket();
+            return zips;
         }
 
         // Legacy in-memory version kept for backward compat

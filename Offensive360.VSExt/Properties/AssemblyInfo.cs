@@ -31,6 +31,6 @@ using System.Runtime.InteropServices;
 // [assembly: AssemblyVersion("1.0.*")]
 // Keep this in sync with source.extension.vsixmanifest <Identity Version="...">.
 // PluginUpdateChecker reads this at runtime so we don't drift from the manifest.
-[assembly: AssemblyVersion("1.12.23.0")]
-[assembly: AssemblyFileVersion("1.12.23.0")]
-[assembly: System.Reflection.AssemblyInformationalVersion("1.12.23")]
+[assembly: AssemblyVersion("1.12.26.0")]
+[assembly: AssemblyFileVersion("1.12.26.0")]
+[assembly: System.Reflection.AssemblyInformationalVersion("1.12.26")]
